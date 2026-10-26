@@ -113,3 +113,7 @@ jobs:
           fi
           gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber
           gh release edit "$TAG" --draft=false --latest --notes-file notes.md
+      - name: Download the published release through the user-facing command
+        env:
+          UPSTREAM: ${{ needs.discover.outputs.upstream }}
+        run: python3 naive_update.py download --release "$UPSTREAM" --output downloaded-release

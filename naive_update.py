@@ -561,7 +561,7 @@ class Transaction:
             self.receipt.unlink(missing_ok=True)
         else:
             atomic_json(self.receipt, journal["previous_receipt"])
-        self.pending.unlink()
+        self.pending.unlink(missing_ok=True)
         sync_dir(self.state)
 
     def activate(self, source, build_info, *, operation="install"):
