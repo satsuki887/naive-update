@@ -37,7 +37,7 @@ http://127.0.0.1:18181 {
 }
 EOF
 bash "$SCRIPT" deploy --build "$BUILD" --config-source "$BASE/initial.Caddyfile" --yes
-[[ $("$NAIVE_TOOL" --version) == 2.0.0 ]]
+[[ $("$NAIVE_TOOL" --version) == 2.1.0 ]]
 [[ $(systemctl show "$NAIVE_SERVICE" -p User --value) == "$NAIVE_USER" ]]
 curl -fsS http://127.0.0.1:18181/ | grep -q ci
 echo 'Fresh install with non-root systemd user and standalone shortcut passed'
@@ -50,6 +50,12 @@ bash "$SCRIPT" config reload --yes
 original_hash=$(sha256sum "$NAIVE_CONFIG")
 bash "$SCRIPT" install --build "$BUILD" --yes
 [[ $(sha256sum "$NAIVE_CONFIG") == "$original_hash" ]]
+NAIVE_OFFLINE=1 bash "$SCRIPT" dashboard >"$BASE/dashboard"
+grep -q 'proxy.example.test' "$BASE/dashboard"
+grep -q 'v2.11.7-naive2' "$BASE/dashboard"
+grep -q 'BBR' "$BASE/dashboard"; grep -q 'WARP' "$BASE/dashboard"
+[[ $(sha256sum "$NAIVE_CONFIG") == "$original_hash" ]]
+echo 'Read-only dashboard identifies actual deployment and preserves config'
 if ! bash -x "$SCRIPT" share --yes >"$BASE/share-output" 2>"$BASE/share-trace"; then
     tail -n 100 "$BASE/share-trace"; cat "$BASE/share-output"; exit 1
 fi

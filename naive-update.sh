@@ -5,7 +5,7 @@
 # shellcheck disable=SC2016,SC2030,SC2031
 set -Eeuo pipefail
 umask 077
-VERSION=2.0.0
+VERSION=2.1.0
 REPO=satsuki887/naive-update
 UPSTREAM=klzgrad/forwardproxy
 BIN=${NAIVE_BIN:-/usr/bin/caddy}
@@ -20,6 +20,209 @@ SELF=$(readlink -f -- "${BASH_SOURCE[0]}")
 YES=0 RELEASE=latest OUTPUT=./build JOBS=2 BUILD_DIR='' CONFIG_SOURCE=''
 TX='' TX_DONE=0
 TEMPS=()
+UI_CACHE='' UI_LOCAL_SIG='' UI_CONFIG_SIG='' UI_JSON=''
+UI_CADDY='' UI_COMMIT='' UI_INSTALLED_TAG='' UI_ORIGIN='' UI_RECEIPT_TAG=''
+UI_DOMAIN='' UI_PORTS='' UI_PROTOCOLS='' UI_CONFIG_STATUS=''
+UI_OFFICIAL='' UI_OWN='' UI_OFFICIAL_SHA='' UI_CLIENT='' UI_CADDY_LATEST='' UI_PACKAGE_READY=0
+C_RESET='' C_TITLE='' C_ACCENT='' C_GOOD='' C_WARN='' C_BAD='' C_MUTED=''
+ui_init() {
+    C_RESET='' C_TITLE='' C_ACCENT='' C_GOOD='' C_WARN='' C_BAD='' C_MUTED=''
+    if [[ -z ${NO_COLOR:-} && ( ${NAIVE_COLOR:-auto} == always || ( ${NAIVE_COLOR:-auto} != never && -t 1 && ${TERM:-dumb} != dumb ) ) ]]; then
+        C_RESET=$'\033[0m'; C_TITLE=$'\033[1;97m'; C_ACCENT=$'\033[1;36m'; C_GOOD=$'\033[32m'; C_WARN=$'\033[33m'; C_BAD=$'\033[31m'; C_MUTED=$'\033[90m'
+    fi
+}
+ui_line() { local width=${COLUMNS:-74} line; [[ $width =~ ^[0-9]+$ ]] || width=74; ((width<=78)) || width=78; ((width>=36)) || width=36; printf -v line '%*s' "$width" ''; line=${line// /─}; printf '%b%s%b\n' "$C_MUTED" "$line" "$C_RESET"; }
+ui_section() { printf '\n  %b%s%b\n' "$C_ACCENT" "$1" "$C_RESET"; }
+ui_width() { local text=$1 char i; local LC_ALL=C.UTF-8; UI_TEXT_WIDTH=0; for ((i=0;i<${#text};i++)); do char=${text:i:1}; if [[ $char == [\ -\~] ]]; then UI_TEXT_WIDTH=$((UI_TEXT_WIDTH+1)); else UI_TEXT_WIDTH=$((UI_TEXT_WIDTH+2)); fi; done; }
+ui_value() { local pad; ui_width "$1"; pad=$((12-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%s%b%*s%s\n' "$C_MUTED" "$1" "$C_RESET" "$pad" '' "$2"; }
+ui_pair() { local pad; ui_width "$2"; pad=$((27-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%2s%b  %s%*s%b%2s%b  %s\n' "$C_ACCENT" "$1" "$C_RESET" "$2" "$pad" '' "$C_ACCENT" "$3" "$C_RESET" "$4"; }
+ui_option() { printf '  %b%2s%b  %s\n' "$C_ACCENT" "$1" "$C_RESET" "$2"; }
+ui_note() { printf '  %b%s%b\n' "$C_MUTED" "$1" "$C_RESET"; }
+ui_clear() { if [[ -t 1 && ${TERM:-dumb} != dumb && ${NAIVE_NO_CLEAR:-0} != 1 ]]; then printf '\033[2J\033[H'; fi; }
+ui_pause() { local _ignored; [[ ! -t 0 ]] || read -r -p '  按回车继续……' _ignored || :; }
+ui_heading() { ui_clear; ui_line; printf '  %bN A I V E  M A N A G E R%b  %bv%s%b\n' "$C_TITLE" "$C_RESET" "$C_MUTED" "$VERSION" "$C_RESET"; ui_note "$1"; ui_line; }
+ui_phase() { printf '\n  %b›%b %s\n' "$C_ACCENT" "$C_RESET" "$1"; }
+ui_age() {
+    local file=$1 age modified
+    if [[ ! -f $file ]]; then REPLY='尚未获取'; return; fi
+    modified=$(stat -c %Y "$file"); age=$(( $(date +%s) - modified )); ((age>=0)) || age=0
+    if ((age<60)); then REPLY='刚刚'; elif ((age<3600)); then REPLY="$((age/60)) 分钟前"; else REPLY="$((age/3600)) 小时前"; fi
+}
+ui_cache_init() {
+    [[ -z $UI_CACHE ]] || return 0
+    UI_CACHE=${NAIVE_UI_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/naive-update/ui}
+    if [[ -L $UI_CACHE ]] || ! mkdir -p "$UI_CACHE" 2>/dev/null; then tmpdir; UI_CACHE=$REPLY; fi
+    chmod 700 "$UI_CACHE" 2>/dev/null || :
+}
+ui_fetch() {
+    local endpoint=$1 name=$2 temp=$UI_CACHE/$2.new.$BASHPID
+    if curl -fsSL --connect-timeout 2 --max-time 5 --proto '=https' --proto-redir '=https' -H "User-Agent: naive-update/$VERSION" "https://api.github.com/$endpoint" -o "$temp" 2>/dev/null && jq -e 'type=="object" or type=="array"' "$temp" >/dev/null 2>&1; then
+        mv -f "$temp" "$UI_CACHE/$name.json"; rm -f "$UI_CACHE/$name.failed"; return 0
+    fi
+    rm -f "$temp"; printf '%s\n' "$(date +%s)" >"$UI_CACHE/$name.failed"; return 1
+}
+ui_load_versions() {
+    local machine tag name
+    UI_OFFICIAL='' UI_OWN='' UI_OFFICIAL_SHA='' UI_CLIENT='' UI_CADDY_LATEST='' UI_PACKAGE_READY=0
+    if [[ -f $UI_CACHE/official.json ]]; then tag=$(jq -r '.tag_name // empty' "$UI_CACHE/official.json" 2>/dev/null) || tag=''; valid_tag "$tag" && UI_OFFICIAL=$tag; fi
+    if [[ -f $UI_CACHE/own.json ]]; then tag=$(jq -r '.tag_name // empty|sub("^server-";"")' "$UI_CACHE/own.json" 2>/dev/null) || tag=''; valid_tag "$tag" && UI_OWN=$tag; fi
+    if [[ -n $UI_OFFICIAL && -f $UI_CACHE/tags.json ]]; then UI_OFFICIAL_SHA=$(jq -r --arg tag "$UI_OFFICIAL" '[.[]|select(.name==$tag)|.commit.sha][0] // empty' "$UI_CACHE/tags.json" 2>/dev/null) || UI_OFFICIAL_SHA=''; fi
+    [[ ! -f $UI_CACHE/client.json ]] || UI_CLIENT=$(jq -r '.tag_name // empty' "$UI_CACHE/client.json" 2>/dev/null) || UI_CLIENT=''
+    [[ ! -f $UI_CACHE/caddy.json ]] || UI_CADDY_LATEST=$(jq -r '.tag_name // empty' "$UI_CACHE/caddy.json" 2>/dev/null) || UI_CADDY_LATEST=''
+    case $(uname -m) in x86_64) machine=amd64;; aarch64|arm64) machine=arm64;; *) machine=unsupported;; esac
+    name=naive-server-$UI_OWN-linux-$machine.tar.gz
+    if [[ -n $UI_OWN ]] && jq -e --arg name "$name" '.draft==false and ([.assets[].name] as $n|($n|index($name))!=null and ($n|index("SHA256SUMS"))!=null)' "$UI_CACHE/own.json" >/dev/null 2>&1; then UI_PACKAGE_READY=1; fi
+}
+ui_versions() {
+    local force=${1:-0} checked=0 current pid
+    local -a pids=()
+    ui_cache_init; current=$(date +%s)
+    if [[ -f $UI_CACHE/checked ]]; then read -r checked <"$UI_CACHE/checked" || checked=0; fi
+    [[ $checked =~ ^[0-9]+$ ]] || checked=0
+    if [[ ${NAIVE_OFFLINE:-0} != 1 ]] && { [[ $force == 1 ]] || ((current-checked>=900)); }; then
+        ui_phase '查询官方服务端、本仓库构建及参考版本（并行查询，约 5 秒超时）'
+        ui_fetch "repos/$UPSTREAM/releases/latest" official & pids+=("$!")
+        ui_fetch "repos/$REPO/releases/latest" own & pids+=("$!")
+        ui_fetch "repos/$UPSTREAM/tags?per_page=30" tags & pids+=("$!")
+        ui_fetch 'repos/klzgrad/naiveproxy/releases/latest' client & pids+=("$!")
+        ui_fetch 'repos/caddyserver/caddy/releases/latest' caddy & pids+=("$!")
+        for pid in "${pids[@]}"; do wait "$pid" || :; done
+        printf '%s\n' "$current" >"$UI_CACHE/checked"
+    fi
+    ui_load_versions
+}
+ui_local_version() {
+    local sig info line receipt_sha actual_sha
+    if [[ ! -x $BIN ]]; then UI_CADDY='' UI_COMMIT='' UI_RECEIPT_TAG='' UI_INSTALLED_TAG='' UI_ORIGIN='未安装'; return; fi
+    sig=$(stat -c '%i:%s:%Y:%Z' "$BIN")
+    if [[ $sig != "$UI_LOCAL_SIG" ]]; then
+        UI_LOCAL_SIG=$sig; UI_RECEIPT_TAG=''; UI_COMMIT=''; UI_ORIGIN='现有部署，从二进制识别'
+        UI_CADDY=$(timeout 3 "$BIN" version 2>/dev/null | awk 'NR==1{print $1}') || UI_CADDY='读取失败'
+        if [[ -f $STATE/current-build.json ]]; then
+            receipt_sha=$(jq -r '.sha256 // empty' "$STATE/current-build.json" 2>/dev/null) || receipt_sha=''
+            actual_sha=$(digest "$BIN")
+            if [[ $receipt_sha == "$actual_sha" ]]; then
+                UI_RECEIPT_TAG=$(jq -r '.release // empty' "$STATE/current-build.json"); UI_COMMIT=$(jq -r '.forwardproxy.commit // empty' "$STATE/current-build.json"); UI_ORIGIN='本工具构建记录已核对'
+            else UI_ORIGIN='构建记录与当前二进制不匹配'; fi
+        fi
+        if [[ -z $UI_COMMIT ]]; then
+            info=$(timeout 3 "$BIN" build-info 2>/dev/null) || info=''
+            line=$(awk '/github.com\/klzgrad\/forwardproxy/{print;exit}' <<<"$info")
+            if [[ $line =~ [0-9]{14}-([a-f0-9]{12}) ]]; then UI_COMMIT=${BASH_REMATCH[1]}; fi
+        fi
+    fi
+    UI_INSTALLED_TAG=$UI_RECEIPT_TAG
+    if [[ -z $UI_INSTALLED_TAG && -n $UI_COMMIT && -f $UI_CACHE/tags.json ]]; then
+        UI_INSTALLED_TAG=$(jq -r --arg sha "$UI_COMMIT" '[.[]|select(.commit.sha|startswith($sha))|.name|select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-naive"))][0] // empty' "$UI_CACHE/tags.json" 2>/dev/null) || UI_INSTALLED_TAG=''
+    fi
+}
+ui_config_info() {
+    local sig
+    UI_CONFIG_STATUS='未找到配置'; UI_DOMAIN='' UI_PORTS='' UI_PROTOCOLS=''
+    [[ -x $BIN && -f $CONFIG ]] || return 0
+    sig="$(stat -c '%i:%s:%Y:%Z' "$CONFIG"):$(($(date +%s)/15))"
+    if [[ $sig != "$UI_CONFIG_SIG" || ! -f $UI_JSON ]]; then
+        UI_CONFIG_SIG=$sig
+        if [[ -z $UI_JSON ]]; then tmpdir; UI_JSON=$REPLY/status.json; fi
+        if ! timeout 3 "$BIN" adapt --config "$CONFIG" --adapter caddyfile >"$UI_JSON" 2>/dev/null; then printf '{}\n' >"$UI_JSON"; UI_CONFIG_STATUS='解析失败；请选 3 验证配置'; return 0; fi
+    fi
+    if ! jq -e '.apps.http.servers' "$UI_JSON" >/dev/null 2>&1; then UI_CONFIG_STATUS='解析失败；请选 3 验证配置'; return 0; fi
+    UI_CONFIG_STATUS='解析通过（完整校验选 3）'
+    discover_domain "$UI_JSON"; UI_DOMAIN=$REPLY
+    UI_PORTS=$(jq -r '[.apps.http.servers[]?.listen[]?]|unique|join(", ")' "$UI_JSON")
+    UI_PROTOCOLS=$(jq -r '[.apps.http.servers[]?.protocols[]?]|unique|join("/")' "$UI_JSON")
+    [[ -n $UI_PROTOCOLS ]] || UI_PROTOCOLS='Caddy 默认协议'
+}
+ui_cert_info() {
+    local cert expiry expiry_epoch remaining
+    REPLY='未读取证书信息'; UI_CERT_WARN=0
+    [[ -f $UI_JSON ]] || return 0
+    cert=$(jq -r '.apps.tls.certificates.load_files[0]?.certificate // empty' "$UI_JSON")
+    if [[ -z $cert ]]; then
+        if [[ -n $UI_DOMAIN && -d $DATA/.local/share/caddy/certificates ]]; then cert=$(find "$DATA/.local/share/caddy/certificates" -name "$UI_DOMAIN.crt" -type f -print -quit 2>/dev/null) || cert=''; fi
+        [[ -n $cert ]] || { REPLY='Caddy 自动管理；详情选 9'; return; }
+    fi
+    if [[ ! -r $cert ]]; then REPLY='外部证书不可读；请选 9 检查'; return; fi
+    expiry=$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null) || { REPLY='证书文件无效'; return; }
+    expiry_epoch=$(date -d "${expiry#notAfter=}" +%s 2>/dev/null) || { REPLY=${expiry#notAfter=}; return; }
+    remaining=$(( (expiry_epoch-$(date +%s))/86400 ))
+    if ((expiry_epoch<$(date +%s))); then REPLY='证书文件已过期'; UI_CERT_WARN=2
+    else REPLY="剩余 $remaining 天 · $(date -d "@${expiry_epoch}" +%F) 到期"; ((remaining>=14)) || UI_CERT_WARN=1; fi
+}
+ui_version_rows() {
+    local current package state age published=''
+    ui_local_version
+    current=${UI_INSTALLED_TAG:-${UI_CADDY:+未记录发行标签}}
+    ui_value '当前服务端' "${current:-未安装}"
+    ui_value '当前 Caddy' "${UI_CADDY:-未安装}    插件提交 ${UI_COMMIT:0:12}${UI_COMMIT:+ · $UI_ORIGIN}"
+    if [[ -f $UI_CACHE/official.json ]]; then published=$(jq -r '.published_at // empty|.[0:10]' "$UI_CACHE/official.json" 2>/dev/null) || published=''; fi
+    ui_value '官方服务端' "${UI_OFFICIAL:-查询失败 / 未缓存}${UI_OFFICIAL_SHA:+ · ${UI_OFFICIAL_SHA:0:12}}${published:+ · $published}"
+    package=${UI_OWN:-查询失败 / 未缓存}; [[ $UI_PACKAGE_READY != 1 ]] || package+=' · 本机架构安装包就绪'
+    ui_value '本仓库构建' "$package"
+    ui_value '参考版本  ' "Caddy ${UI_CADDY_LATEST:-未获取} · Naive 客户端 ${UI_CLIENT:-未获取}"
+    ui_note '参考版本不作为本服务端的升级判据；以官方服务端配套版本为准'
+    ui_age "$UI_CACHE/official.json"; age=$REPLY
+    state='已查询'; [[ ! -f $UI_CACHE/official.failed && ! -f $UI_CACHE/own.failed ]] || state='查询失败，保留已有缓存'; [[ ${NAIVE_OFFLINE:-0} != 1 ]] || state='离线模式，使用已有缓存'
+    ui_note "版本信息：$age · $state · 15 分钟缓存，按 r 强制刷新"
+}
+ui_recommendation() {
+    local tone=$C_WARN message
+    if [[ -f $STATE/pending.json ]]; then tone=$C_BAD; message='存在未完成事务 → 先选 12 恢复，再做其他变更'
+    elif [[ ! -x $BIN ]]; then message='尚未安装服务端 → 选 1 开始全新部署'
+    elif [[ ! -f $CONFIG ]]; then tone=$C_BAD; message='主配置文件缺失 → 选 14 诊断，先不要更新'
+    elif [[ ${UI_SERVICE_ACTIVE:-unknown} != active && ${UI_SERVICE_ACTIVE:-unknown} != unknown ]]; then tone=$C_BAD; message='服务未运行 → 选 4 检查服务，或选 8 查看日志'
+    elif [[ $UI_CONFIG_STATUS == 解析失败* ]]; then tone=$C_BAD; message='配置解析异常 → 先选 3 使用服务环境完整验证，再考虑更新'
+    elif [[ ${UI_CERT_WARN:-0} == 2 ]]; then tone=$C_BAD; message='证书文件已过期 → 先选 9 检查续期与重载'
+    elif [[ -f $UI_CACHE/official.failed || -f $UI_CACHE/own.failed ]]; then message='在线查询失败，当前展示缓存；按 r 重试，或继续管理本地服务'
+    elif [[ -n $UI_INSTALLED_TAG && $UI_INSTALLED_TAG == "$UI_OFFICIAL" && ! -f $UI_CACHE/official.failed ]]; then tone=$C_GOOD; message='当前已是官方最新稳定服务端，无需重复更新'
+    elif [[ -n $UI_INSTALLED_TAG && $UI_INSTALLED_TAG == "$UI_OWN" && $UI_OWN != "$UI_OFFICIAL" ]]; then message='已是本仓库当前构建；官方有其他版本，可选 6 查看源码方案'
+    elif [[ -n $UI_OFFICIAL && -n $UI_INSTALLED_TAG && $UI_INSTALLED_TAG != "$UI_OFFICIAL" ]]; then message='当前发行版与官方最新不同 → 选 6 查看版本差异后决定是否更新'
+    elif [[ -z $UI_OFFICIAL ]]; then message='官方版本查询不可用；可管理本地服务，按 r 重试查询'
+    else message='当前发行标签尚未识别 → 选 6 核对插件提交与目标构建后再更新'; fi
+    printf '\n  %b建议  %s%b\n' "$tone" "$message" "$C_RESET"
+}
+ui_system_rows() {
+    local os info key value pid=0 service=unknown enabled=unknown started=0 memory='未知' up='未知' resources bbr queue warp address
+    os=$(awk -F= '/^PRETTY_NAME=/{v=substr($0,index($0,"=")+1);gsub(/^"|"$/,"",v);print v}' /etc/os-release 2>/dev/null) || os=$(uname -s)
+    ui_value '系统环境  ' "${os:-$(uname -s)} · $(uname -m) · 内核 $(uname -r)"
+    resources=$(awk '/^MemTotal:/{t=$2}/^MemAvailable:/{a=$2}END{if(t>0)printf "内存 %.0f/%.0f MiB",(t-a)/1024,t/1024}' /proc/meminfo 2>/dev/null) || resources=''
+    ui_value '系统资源  ' "${resources:-内存未知} · 磁盘可用 $(df -Ph / 2>/dev/null | awk 'NR==2{print $4}')"
+    if command -v systemctl >/dev/null; then
+        info=$(timeout 2 systemctl show "$SERVICE" -p ActiveState -p MainPID -p UnitFileState -p ExecMainStartTimestampMonotonic -p MemoryCurrent 2>/dev/null) || info=''
+        while IFS='=' read -r key value; do case $key in ActiveState) service=$value;; MainPID) pid=$value;; UnitFileState) enabled=$value;; ExecMainStartTimestampMonotonic) started=$value;; MemoryCurrent) if [[ $value =~ ^[0-9]+$ ]]; then memory="$((value/1048576)) MiB"; fi;; esac; done <<<"$info"
+    fi
+    UI_SERVICE_ACTIVE=$service
+    if [[ $started =~ ^[0-9]+$ && $started -gt 0 && -r /proc/uptime ]]; then up=$(awk -v start="$started" '{s=int($1-start/1000000);if(s<0)s=0;printf "%d天 %02d:%02d",s/86400,(s%86400)/3600,(s%3600)/60}' /proc/uptime); fi
+    case $service in active) service="${C_GOOD}● 运行中${C_RESET}";; inactive|failed) service="${C_BAD}○ 已停止 / $service${C_RESET}";; *) service="${C_WARN}○ 未运行 / 未识别${C_RESET}";; esac
+    case $enabled in enabled) enabled='已开启';; disabled) enabled='已关闭';; static) enabled='静态单元';; *) enabled=${enabled:-未知};; esac
+    ui_value '服务状态  ' "$service · PID $pid · 自启 $enabled"
+    ui_value '服务资源  ' "运行 $up · 进程内存 $memory"
+    ui_config_info
+    address=${UI_DOMAIN:-尚未识别}; ui_value '站点监听  ' "$address · ${UI_PORTS:-未识别} · ${UI_PROTOCOLS:-未知协议}"
+    ui_cert_info; ui_value '配置 / 证书' "$UI_CONFIG_STATUS · $REPLY"
+    bbr=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null) || bbr='未知'
+    queue=$(sysctl -n net.core.default_qdisc 2>/dev/null) || queue='未知'
+    if [[ $bbr == bbr ]]; then bbr="${C_GOOD}BBR 已启用${C_RESET}"; else bbr="拥塞控制 $bbr（BBR 未启用）"; fi
+    warp='未安装'
+    if command -v warp-cli >/dev/null; then
+        info=$(timeout 2 warp-cli status 2>/dev/null) || info=''
+        if grep -Eqi '(^|[[:space:]])connected([[:space:]]|$)' <<<"$info"; then warp="${C_GOOD}已连接${C_RESET}"
+        elif grep -Eqi 'disconnected' <<<"$info"; then warp='已安装 / 未连接'; else warp='已安装 / 状态未知'; fi
+    fi
+    ui_value '附加功能  ' "$bbr · 队列 $queue · WARP $warp"
+}
+ui_update_review() {
+    local dir=$1 target caddy commit same=''
+    verify_build "$dir"; ui_cache_init; ui_load_versions; ui_local_version
+    target=$(jq -r .release "$dir/build.json"); caddy=$(jq -r '.caddy.version // "未记录"' "$dir/build.json"); commit=$(jq -r '.forwardproxy.commit // empty' "$dir/build.json")
+    ui_section '安装前版本对比'
+    ui_value '当前安装  ' "${UI_INSTALLED_TAG:-发行标签未知} · Caddy ${UI_CADDY:-未安装} · 插件 ${UI_COMMIT:0:12}"
+    ui_value '本次目标  ' "$target · Caddy $caddy · 插件 ${commit:0:12}"
+    ui_value '目标 SHA256' "$(jq -r .sha256 "$dir/build.json")"
+    ui_note '目标构建已校验；随后验证当前配置、备份，最后才替换并重启'
+    if [[ -f $BIN && $(digest "$BIN") == "$(jq -r .sha256 "$dir/build.json")" ]]; then same='本次二进制与当前文件相同，通常无需重复安装'; fi
+    [[ -z $same ]] || printf '  %b%s%b\n' "$C_WARN" "$same" "$C_RESET"
+}
 say() { printf '%s\n' "$*"; }
 die() { say "错误：$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "缺少 $1；请运行 deps 安装基础依赖"; }
@@ -32,7 +235,7 @@ tmpdir() { REPLY=$(mktemp -d); TEMPS+=("$REPLY"); }
 valid_tag() { [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+-naive[a-zA-Z0-9._-]*$ ]]; }
 regular() { [[ -f $1 && ! -L $1 ]] || die "要求普通文件，拒绝符号链接：$1"; }
 mutable() { local flags; if command -v lsattr >/dev/null; then flags=$(lsattr -d -- "$1" 2>/dev/null | awk '{print $1}') || return 0; [[ $flags != *i* && $flags != *a* ]] || die "文件 immutable/append-only：$1"; fi; }
-download_url() { curl -fsSL --retry 3 --connect-timeout 15 --max-time 300 --proto '=https' --proto-redir '=https' --max-filesize 157286400 "$1" -o "$2"; }
+download_url() { local -a progress=(--silent --show-error); [[ ! -t 2 || ${NAIVE_PROGRESS:-1} == 0 ]] || progress=(--progress-bar --show-error); curl -fL "${progress[@]}" --retry 3 --connect-timeout 15 --max-time 300 --proto '=https' --proto-redir '=https' --max-filesize 157286400 "$1" -o "$2"; }
 api() { curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 --proto '=https' --proto-redir '=https' -H 'Accept: application/vnd.github+json' -H "User-Agent: naive-update/$VERSION" "https://api.github.com/$1"; }
 latest_tag() { REPLY=$1; [[ $REPLY != latest ]] || REPLY=$(api "repos/$UPSTREAM/releases/latest" | jq -er '.tag_name'); valid_tag "$REPLY" || die '需要服务端 vX.Y.Z-naive… 标签，不能使用 Chromium 客户端版本'; }
 arch() { case $(uname -m) in x86_64) REPLY=amd64;; aarch64|arm64) REPLY=arm64;; *) die '目前仅支持 amd64、arm64';; esac; }
@@ -175,6 +378,7 @@ verify_build() {
 fetch_build() {
     local tag=$RELEASE meta name url sums hash actual asset_digest machine listing expected work
     arch; machine=$REPLY
+    ui_phase '1/3 查询本仓库构建信息；此阶段不修改服务'
     if [[ $tag == latest ]]; then meta=$(api "repos/$REPO/releases/latest"); tag=$(jq -r .tag_name <<<"$meta"); tag=${tag#server-}
     else valid_tag "$tag" || die '服务端标签无效'; meta=$(api "repos/$REPO/releases/tags/server-$tag"); fi
     valid_tag "$tag" || die '下载版本无效'; [[ ! -e $OUTPUT ]] || die "输出目录已存在：$OUTPUT"
@@ -182,8 +386,9 @@ fetch_build() {
     url=$(jq -er --arg name "$name" '.assets[]|select(.name==$name)|.browser_download_url' <<<"$meta")
     sums=$(jq -er '.assets[]|select(.name=="SHA256SUMS")|.browser_download_url' <<<"$meta")
     [[ $url == "https://github.com/$REPO/releases/download/"* && $sums == "https://github.com/$REPO/releases/download/"* ]] || die '拒绝非本仓库发布地址'
-    say "下载 $tag / $machine"; download_url "$url" "$work/bundle.tar.gz"; download_url "$sums" "$work/SHA256SUMS"
+    ui_phase "1/3 下载 $tag / $machine 安装包及摘要"; download_url "$url" "$work/bundle.tar.gz"; download_url "$sums" "$work/SHA256SUMS"
     hash=$(awk -v name="$name" '$2==name&&length($1)==64&&$1!~/[^0-9a-f]/{print $1;n++} END{if(n!=1)exit 1}' "$work/SHA256SUMS")
+    ui_phase '2/3 校验压缩包、GitHub 资产摘要与包内构建记录'
     actual=$(digest "$work/bundle.tar.gz"); [[ $hash == "$actual" ]] || die '压缩包 SHA256 校验失败'
     asset_digest=$(jq -r --arg name "$name" '.assets[]|select(.name==$name)|.digest//empty' <<<"$meta")
     [[ -z $asset_digest || $asset_digest == "sha256:$actual" ]] || die 'GitHub 资产摘要不匹配'
@@ -239,13 +444,16 @@ build_source() {
     need git; arch; local machine=$REPLY tag work target patch xcaddy_version fc cc
     latest_tag "$RELEASE"; tag=$REPLY; [[ ! -e $OUTPUT ]] || die "输出目录已存在：$OUTPUT"
     mkdir -p "$(dirname "$OUTPUT")"; target=$(readlink -m "$OUTPUT"); work=$(mktemp -d "$(dirname "$target")/.naive-build.XXXXXX")
-    say "构建 $tag；诊断日志：$work/build.log"
+    ui_phase "1/3 准备官方源码 $tag 与配套工具链"
+    say "  诊断日志：$work/build.log"
     clone_tag "https://github.com/$UPSTREAM.git" "$tag" "$work/forwardproxy" >>"$work/build.log" 2>&1
     plan "$work/forwardproxy"; go_toolchain "$GO_MIN"
+    ui_phase "1/3 获取配套 Caddy $CADDY_VERSION，按官方顺序应用 ${#PATCHES[@]} 个补丁"
+    clone_tag https://github.com/caddyserver/caddy.git "$CADDY_VERSION" "$work/caddy-source" >>"$work/build.log" 2>&1
+    for patch in "${PATCHES[@]}"; do git -C "$work/caddy-source" apply --check "$work/forwardproxy/$patch" >>"$work/build.log" 2>&1; git -C "$work/caddy-source" apply "$work/forwardproxy/$patch" >>"$work/build.log" 2>&1; done
+    ui_phase '2/3 编译依赖与 Caddy；详细进度写入上述日志，当前服务继续运行'
     (
         set -Eeuo pipefail
-        clone_tag https://github.com/caddyserver/caddy.git "$CADDY_VERSION" "$work/caddy-source"
-        for patch in "${PATCHES[@]}"; do git -C "$work/caddy-source" apply --check "$work/forwardproxy/$patch"; git -C "$work/caddy-source" apply "$work/forwardproxy/$patch"; done
         local key; while IFS= read -r key; do [[ $key != XCADDY_* ]] || unset "$key"; done < <(compgen -e)
         export GOTOOLCHAIN=local GOENV=off GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH="$machine" GOAMD64=v1
         export GOPROXY=https://proxy.golang.org,direct GOSUMDB=sum.golang.org GOPRIVATE='' GONOPROXY='' GONOSUMDB='' GOINSECURE='' GOWORK=off GOFLAGS='' GOEXPERIMENT=''
@@ -269,7 +477,9 @@ build_source() {
 install_binary() {
     local dir=$1 id stage expected
     verify_build "$dir"; regular "$BIN"; regular "$CONFIG"; mutable "$BIN"
-    ask '替换 Caddy 并重启服务？主配置保持原样' || return 0
+    ui_update_review "$dir"
+    ask '确认备份、替换为上述目标并重启？Caddyfile 保持原样' || return 0
+    ui_phase '3/3 验证现有配置，建立备份并切换目标内核'
     snapshot binary; id=$REPLY
     stage=$(mktemp "$(dirname "$BIN")/.naive-validate.XXXXXX"); cp "$dir/caddy" "$stage"; cp --attributes-only --preserve=all "$BIN" "$stage"
     expected=$(jq -r .sha256 "$dir/build.json"); [[ $(digest "$stage") == "$expected" ]] || die '候选程序在校验后变化'
@@ -645,64 +855,97 @@ cert_import() {
     say '请手工把站点 tls 行改为以下内容，再验证、重载：'
     printf 'tls "%s/cert.crt" "%s/private.key"\n' "$dir" "$dir"
 }
-run_menu_command() { local result; set +e; bash "$SELF" "$@"; result=$?; set -e; [[ $result == 0 ]] || say "操作退出码：$result"; }
+run_menu_command() { local result; set +e; bash "$SELF" "$@"; result=$?; set -e; [[ $result == 0 ]] || printf '  %b操作未完成（退出码 %s），请查看上方原因%b\n' "$C_BAD" "$result" "$C_RESET"; }
 menu_draw() {
-    say '════════════════════════════════════════════════════════════'
-    say " Naive 管理工具 v$VERSION — 独立 Shell / 官方源码构建"
-    if [[ -x $BIN ]]; then printf ' 已安装 Caddy：'; "$BIN" version; fi
-    if command -v systemctl >/dev/null; then printf ' 服务：'; systemctl is-active "$SERVICE" || :; fi
-    say ' 1. 全新安装与部署 Naive 服务端'
-    say ' 2. 卸载服务端（保留配置、证书、备份）'
-    say ' 3. Caddyfile：手工编辑 / 验证 / 重载 / 示例'
-    say ' 4. 服务：启动 / 停止 / 重启 / 开机启动'
-    say ' 5. 版本检查与工具信息（无脚本自更新）'
-    say ' 6. 更新内核：本仓库 CI 包 / 官方本地编译'
-    say ' 7. 分享链接 / Naive 客户端 JSON / 二维码'
-    say ' 8. 查看运行日志'
-    say ' 9. 证书：Caddy ACME / 导入 / 已有 acme.sh'
-    say '10. WARP 管理与 ChatGPT / Netflix 出口检测'
-    say '11. BBR + FQ / cubic / 恢复网络参数'
-    say '12. 备份回滚 / 中断恢复'
-    say '13. 安装快捷命令 / 可选接管 na'
-    say '14. 系统诊断 / 安装依赖'
-    say ' 0. 退出'
-    say '════════════════════════════════════════════════════════════'
+    ui_versions 0
+    ui_heading '单文件 Shell · 手工维护 Caddyfile · 内核升级保留配置'
+    ui_section '本机概况'
+    ui_system_rows
+    ui_section '版本与更新'
+    ui_version_rows
+    ui_recommendation
+    ui_section '操作菜单'
+    ui_pair 1 '安装 / 部署' 6 '内核更新 / 版本对比'
+    ui_pair 2 '卸载服务端' 7 '分享 / 客户端配置'
+    ui_pair 3 'Caddyfile 管理' 8 '运行日志'
+    ui_pair 4 '服务启停' 9 '证书 / ACME'
+    ui_pair 5 '版本检查 / 刷新' 10 'WARP / 出口检测'
+    ui_pair 12 '回滚 / 中断恢复' 11 'BBR / 队列管理'
+    ui_pair 13 '快捷命令' 14 '诊断 / 安装依赖'
+    ui_line
+    ui_note 'r 刷新状态与官方版本    0 / q 退出    子菜单均可按 0 返回'
+}
+submenu_draw() {
+    local kind=$1
+    ui_heading '0 返回主菜单 · 操作后留在本子菜单，便于继续管理'
+    case $kind in
+        config) ui_section 'Caddyfile 管理'; ui_value '配置文件' "$CONFIG"; ui_option 1 '编辑副本，验证通过后应用'; ui_option 2 '验证当前 Caddyfile'; ui_option 3 '重载手工修改的配置'; ui_option 4 '生成独立示例（不加载、不覆盖主配置）';;
+        service) ui_section '服务管理'; ui_value '服务单元' "$SERVICE"; ui_option 1 '查看详细状态'; ui_option 2 '启动'; ui_option 3 '停止'; ui_option 4 '重启'; ui_option 5 '启用开机启动'; ui_option 6 '禁用开机启动';;
+        cert) ui_section '证书与 ACME'; ui_option 1 '证书状态 / 有效期'; ui_option 2 '验证配置并重载证书'; ui_option 3 '导入证书（输出 tls 行，由你手工编辑）'; ui_option 4 '列出已有 acme.sh 证书'; ui_option 5 '调用已有 acme.sh 续期';;
+        warp) ui_section 'WARP 与出口检测'; ui_option 1 '查看连接状态和设置'; ui_option 2 '从 Cloudflare 官方源安装'; ui_option 3 '连接本地代理模式'; ui_option 4 '断开 WARP'; ui_option 5 '检测直连出口'; ui_option 6 '检测本地 SOCKS5 出口';;
+        bbr) ui_section 'BBR 与网络队列'; bbr_status 2>/dev/null || ui_note '当前系统无法读取 sysctl'; ui_option 1 '刷新当前参数'; ui_option 2 '启用 BBR + FQ'; ui_option 3 '切换 cubic + fq_codel'; ui_option 4 '恢复某次修改前的参数'; ui_note '只使用当前内核；修改独立 sysctl 文件，不安装第三方内核';;
+        backup) ui_section '备份与恢复'; [[ ! -f $STATE/pending.json ]] || printf '  %b检测到未完成事务，请先选择 4 恢复%b\n' "$C_BAD" "$C_RESET"; ui_option 1 '列出备份'; ui_option 2 '恢复最近一次操作前状态'; ui_option 3 '指定备份恢复'; ui_option 4 '恢复中断事务';;
+        shortcut) ui_section '快捷命令'; ui_value '主命令' "$TOOL"; ui_option 1 '安装 / 更新当前本地快捷命令'; ui_option 2 '备份旧脚本并接管 /usr/bin/na'; ui_note '不从网络自动下载或覆盖管理脚本';;
+        doctor) ui_section '系统诊断与依赖'; ui_option 1 '只读诊断'; ui_option 2 '通过系统软件源安装依赖';;
+    esac
+    ui_line; ui_option 0 '返回主菜单'
+}
+submenu() {
+    local kind=$1 choice port id
+    while :; do
+        submenu_draw "$kind"; read -r -p '  选择操作 [0 返回]：' choice || return 0
+        [[ $choice != 0 && $choice != q ]] || return 0
+        case $kind:$choice in
+            config:1) run_menu_command config edit;; config:2) run_menu_command config validate;; config:3) run_menu_command config reload;; config:4) run_menu_command config examples;;
+            service:1) run_menu_command service status;; service:2) run_menu_command service start;; service:3) run_menu_command service stop;; service:4) run_menu_command service restart;; service:5) run_menu_command service enable;; service:6) run_menu_command service disable;;
+            cert:1) run_menu_command cert status;; cert:2) run_menu_command cert reload;; cert:3) run_menu_command cert import;; cert:4) run_menu_command cert acme-list;; cert:5) run_menu_command cert acme-renew;;
+            warp:1) run_menu_command warp status;; warp:2) run_menu_command warp install;; warp:3) run_menu_command warp connect;; warp:4) run_menu_command warp disconnect;; warp:5) run_menu_command network-check;; warp:6) prompt port '  SOCKS5 端口' 40000; run_menu_command network-check "$port";;
+            bbr:1) continue;; bbr:2) run_menu_command bbr enable;; bbr:3) run_menu_command bbr disable;; bbr:4) find "$STATE/backups" -name bbr.json -print 2>/dev/null || :; prompt id '  备份目录 ID'; [[ -z $id ]] || run_menu_command rollback "$id";;
+            backup:1) run_menu_command backups;; backup:2) run_menu_command rollback;; backup:3) prompt id '  备份 ID'; [[ -z $id ]] || run_menu_command rollback "$id";; backup:4) run_menu_command recover;;
+            shortcut:1) run_menu_command install-tool;; shortcut:2) run_menu_command install-na;; doctor:1) run_menu_command doctor;; doctor:2) run_menu_command deps;;
+            *) say '  编号无效，请重新选择';;
+        esac
+        UI_LOCAL_SIG='' UI_CONFIG_SIG=''; ui_pause
+    done
+}
+upgrade_menu() {
+    local choice path
+    while :; do
+        ui_versions 0; ui_heading '内核更新 · 先看当前与目标，再下载、验证、确认安装'
+        ui_section '版本对比'; ui_version_rows; ui_recommendation
+        ui_section '更新方式'
+        ui_option 1 "本仓库 CI 包 → ${UI_OWN:-暂不可用}"
+        ui_option 2 "本地官方源码 → ${UI_OFFICIAL:-暂不可用}"
+        ui_option 3 '安装已有构建目录（读取实际 build.json 后确认）'
+        ui_option r '重新查询官方与本仓库版本'
+        ui_line; ui_option 0 '返回主菜单'
+        read -r -p '  选择更新方式 [0 返回]：' choice || return 0
+        case $choice in
+            0|q) return 0;;
+            r|R) UI_LOCAL_SIG='' UI_CONFIG_SIG=''; ui_versions 1; continue;;
+            1) if [[ $UI_PACKAGE_READY == 1 ]]; then run_menu_command update --source download --release "$UI_OWN" --output "$STATE/artifacts/$(now)"; else say '  当前架构没有就绪的构建包，或查询失败；请刷新，或选择本地源码编译。'; fi;;
+            2) if [[ -n $UI_OFFICIAL ]]; then run_menu_command update --source build --release "$UI_OFFICIAL" --output "$STATE/artifacts/$(now)"; else say '  尚未识别官方目标版本，请按 r 刷新；不会盲目编译未知版本。'; fi;;
+            3) prompt path '  构建目录（留空取消）'; [[ -z $path ]] || run_menu_command install --build "$path";;
+            *) say '  编号无效';;
+        esac
+        UI_LOCAL_SIG='' UI_CONFIG_SIG=''; ui_pause
+    done
 }
 menu() {
-    local choice sub source path port id missing=0 cmd
+    local choice missing=0 cmd
     root
     for cmd in jq curl openssl flock setpriv; do command -v "$cmd" >/dev/null || missing=1; done
     if [[ $missing == 1 ]]; then ask '缺少基础依赖，先使用系统源安装？' || return; run_menu_command deps --yes; fi
     run_menu_command install-tool --yes
     while :; do
-        menu_draw; read -r -p '请输入编号：' choice || break
+        menu_draw; read -r -p '  请选择 [r 刷新 / 0 退出]：' choice || break
         case $choice in
-            0) break;;
-            1) run_menu_command deploy;;
-            2) run_menu_command uninstall;;
-            3) say "配置：$CONFIG"; say '1 编辑副本并验证应用  2 验证  3 重载手工修改的配置  4 写入可选示例（不加载）'; prompt sub '选择' 2
-               case $sub in 1) run_menu_command config edit;; 2) run_menu_command config validate;; 3) run_menu_command config reload;; 4) run_menu_command config examples;; esac;;
-            4) say '1 状态  2 启动  3 停止  4 重启  5 开机启动  6 禁用开机启动'; prompt sub '选择' 1
-               case $sub in 1) run_menu_command service status;; 2) run_menu_command service start;; 3) run_menu_command service stop;; 4) run_menu_command service restart;; 5) run_menu_command service enable;; 6) run_menu_command service disable;; esac;;
-            5) run_menu_command check; say "工具 v$VERSION：手工下载自己的仓库新脚本后运行即可更新工具，不会自行下载覆盖。";;
-            6) say '1 下载本仓库 CI 包并安装  2 本地官方源码编译并安装  3 安装已有构建目录'; prompt source '选择' 1
-               case $source in 1) run_menu_command update --source download --output "$STATE/artifacts/$(now)";; 2) run_menu_command update --source build --output "$STATE/artifacts/$(now)";; 3) prompt path '构建目录'; run_menu_command install --build "$path";; esac;;
-            7) run_menu_command share;;
-            8) run_menu_command logs;;
-            9) say '1 证书状态  2 重载现有证书  3 导入证书（只给出 tls 行）  4 已有 acme.sh 列表  5 已有 acme.sh 续期'; prompt sub '选择' 1
-               case $sub in 1) run_menu_command cert status;; 2) run_menu_command cert reload;; 3) run_menu_command cert import;; 4) run_menu_command cert acme-list;; 5) run_menu_command cert acme-renew;; esac;;
-            10) say '1 状态  2 从 Cloudflare 官方源安装  3 连接本地代理  4 断开  5 直连出口检测  6 本地代理出口检测'; prompt sub '选择' 1
-                case $sub in 1) run_menu_command warp status;; 2) run_menu_command warp install;; 3) run_menu_command warp connect;; 4) run_menu_command warp disconnect;; 5) run_menu_command network-check;; 6) prompt port 'SOCKS5 端口' 40000; run_menu_command network-check "$port";; esac;;
-            11) say '1 状态  2 启用 BBR + FQ  3 cubic + fq_codel  4 恢复某次修改前参数'; prompt sub '选择' 1
-                case $sub in 1) run_menu_command bbr status;; 2) run_menu_command bbr enable;; 3) run_menu_command bbr disable;; 4) find "$STATE/backups" -name bbr.json -print 2>/dev/null || :; prompt id '备份目录 ID'; run_menu_command rollback "$id";; esac;;
-            12) say '1 列出备份  2 恢复最近一次操作前状态  3 指定备份恢复  4 恢复中断事务'; prompt sub '选择' 1
-                case $sub in 1) run_menu_command backups;; 2) run_menu_command rollback;; 3) prompt id '备份 ID'; run_menu_command rollback "$id";; 4) run_menu_command recover;; esac;;
-            13) say '1 安装 /usr/bin/naive-update  2 备份并接管 /usr/bin/na'; prompt sub '选择' 1
-                case $sub in 1) run_menu_command install-tool;; 2) run_menu_command install-na;; esac;;
-            14) say '1 系统诊断  2 安装依赖'; prompt sub '选择' 1; case $sub in 1) run_menu_command doctor;; 2) run_menu_command deps;; esac;;
-            *) say '编号无效';;
+            0|q) break;; r|R|5) UI_LOCAL_SIG='' UI_CONFIG_SIG=''; ui_versions 1; continue;;
+            3) submenu config;; 4) submenu service;; 6) upgrade_menu;; 9) submenu cert;; 10) submenu warp;; 11) submenu bbr;; 12) submenu backup;; 13) submenu shortcut;; 14) submenu doctor;;
+            1) run_menu_command deploy; ui_pause;; 2) run_menu_command uninstall; ui_pause;; 7) run_menu_command share; ui_pause;; 8) run_menu_command logs; ui_pause;;
+            *) say '  编号无效'; ui_pause;;
         esac
-        read -r -p '按回车返回菜单……' sub || break
+        UI_LOCAL_SIG='' UI_CONFIG_SIG=''
     done
 }
 usage() {
@@ -717,6 +960,7 @@ config edit|validate|reload|examples
 service status|start|stop|restart|enable|disable
 cert status|reload|import|acme-list|acme-renew
 share|logs|doctor|check|backups|rollback [ID]|recover
+dashboard                显示本机、BBR/WARP 与版本对比状态（不进入菜单）
 bbr status|enable|disable
 warp status|install|connect|disconnect
 network-check [SOCKS_PORT]
@@ -728,6 +972,7 @@ EOF
 }
 main() {
     local command=${1:-menu} sub='' source=download backup_id='' network_port='' id
+    ui_init
     CERT_FILE='' KEY_FILE='' DOMAIN=''
     case $command in --help|-h) usage; return;; --version) say "$VERSION"; return;; esac
     [[ $# == 0 ]] || shift
@@ -753,13 +998,14 @@ main() {
     need jq; need curl; need openssl
     case $command in
         download) fetch_build; return;; build) [[ $(uname -s) == Linux ]] || die '构建需要 Linux'; build_source; return;;
-        check) latest_tag latest; say "官方服务端：$REPLY"; [[ ! -x $BIN ]] || "$BIN" version; say 'Chromium 客户端版本独立管理。'; return;;
+        check) ui_versions 1; ui_heading '版本检查'; ui_version_rows; return;;
+        dashboard) menu_draw; return;;
     esac
     need systemctl; need flock; need setpriv; state_init "$command"
     case $command in
         deploy) deploy;;
         install) [[ -n $BUILD_DIR ]] || die '需要 --build DIR'; install_binary "$BUILD_DIR";;
-        update) ask '下载/编译并安装新内核，验证后重启？' || return; YES=1; case $source in download) fetch_build;; build) build_source;; *) die 'source 必须为 download 或 build';; esac; install_binary "$OUTPUT";;
+        update) ui_phase "获取目标 $RELEASE（$source）；下载或编译阶段不会重启服务"; case $source in download) fetch_build;; build) build_source;; *) die 'source 必须为 download 或 build';; esac; install_binary "$OUTPUT";;
         config) case $sub in edit) edit_config;; validate) snapshot config; id=$REPLY; validate_config "$BIN" "$CONFIG" "$STATE/backups/$id/validate.log"; say '配置验证通过';; reload) reload_config;; examples) examples; say "示例已写入 $(dirname "$CONFIG")/examples；未自动加载";; *) die '未知 config 操作';; esac;;
         service) case $sub in status) systemctl status "$SERVICE" --no-pager;; start|restart) ask "$sub $SERVICE？" || return; systemctl "$sub" "$SERVICE"; health "$(digest "$BIN")";; stop|enable|disable) ask "$sub $SERVICE？" || return; systemctl "$sub" "$SERVICE";; *) die '未知 service 操作';; esac;;
         cert) case $sub in status) cert_status;; reload) reload_config;; import) cert_import;; acme-list) acme_existing list;; acme-renew) acme_existing renew;; *) die '未知 cert 操作';; esac;;

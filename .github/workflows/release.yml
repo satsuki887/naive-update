@@ -54,6 +54,7 @@ jobs:
           check-latest: true
           cache: false
       - run: bash tests/test-shell.sh
+      - run: bash tests/test-ui.sh
       - name: Build pinned official source with its CI patches
         env:
           RELEASE: ${{ needs.discover.outputs.upstream }}
