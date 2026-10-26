@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
+# Test fixtures deliberately contain literal environment syntax.
+# shellcheck disable=SC2016
 set -Eeuo pipefail
 SCRIPT=$(readlink -f "$(dirname "$0")/../naive-update.sh")
+# shellcheck source=naive-update.sh
 source "$SCRIPT"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
@@ -13,7 +16,7 @@ render_config proxy.example.com 443 user 'pass:quote"and space' auto '' local /v
 ok 'clean official defaults'
 grep -q 'order forward_proxy before file_server' "$work/default"; grep -q 'exclude http.log.error' "$work/default"; ok 'official routing and error-log privacy'
 render_config proxy.example.com 8443 user password auto '' https://example.org /unused >"$work/reverse"
-grep -q 'reverse_proxy https://example.org' "$work/reverse"; ! grep -q header_up "$work/reverse"; ok 'modern HTTPS upstream without obsolete Host override'
+grep -q 'reverse_proxy https://example.org' "$work/reverse"; if grep -q header_up "$work/reverse"; then bad 'obsolete upstream Host'; fi; ok 'modern HTTPS upstream without obsolete Host override'
 reject render_config example.com 0 user pass auto '' local /tmp
 reject render_config 'example.com;touch' 443 user pass auto '' local /tmp
 reject render_config example.com 443 'bad:user' pass auto '' local /tmp
@@ -46,7 +49,7 @@ for name in build-info.txt SHA256SUMS LICENSES.txt; do printf x >"$work/artifact
 printf 'PRIVATE_SECRET' >"$work/artifact/Caddyfile"
 bash "$(dirname "$SCRIPT")/ci/package.sh" "$work/artifact" "$work/dist" >/dev/null
 [[ $(tar -tzf "$work/dist/naive-server-v2.11.7-naive2-linux-amd64.tar.gz" | wc -l) == 5 ]] || bad 'package membership'
-! tar -tzf "$work/dist/naive-server-v2.11.7-naive2-linux-amd64.tar.gz" | grep -q Caddyfile; ok 'package excludes config and secrets'
+if tar -tzf "$work/dist/naive-server-v2.11.7-naive2-linux-amd64.tar.gz" | grep -q Caddyfile; then bad 'private config in package'; fi; ok 'package excludes config and secrets'
 NAIVE_CONFIG=$work/etc/Caddyfile bash -c 'source "$1"; CONFIG=$NAIVE_CONFIG; examples' _ "$SCRIPT"
 [[ -f $work/etc/examples/Caddyfile.standard && ! -f $work/etc/Caddyfile ]] || bad 'examples modified active config'; ok 'optional examples not activated'
 ! grep -Eq 'exec python|python3 ' "$SCRIPT" || bad 'runtime Python dependency'; ok 'standalone Shell runtime'

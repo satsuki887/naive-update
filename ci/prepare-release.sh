@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+# shellcheck source=naive-update.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../naive-update.sh"
 latest_tag "${REQUESTED_RELEASE:-latest}"
 upstream=$REPLY

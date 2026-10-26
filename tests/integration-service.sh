@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Only executed in disposable GitHub-hosted Linux runners.
+# Fixtures deliberately preserve literal environment syntax and generated shell code.
+# shellcheck disable=SC2016
 set -Eeuo pipefail
 [[ ${GITHUB_ACTIONS:-} == true && $EUID == 0 ]] || { echo 'CI root only' >&2; exit 1; }
 SCRIPT=$(readlink -f "$(dirname "$0")/../naive-update.sh")

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # NAIVE_SINGLE_FILE=1 — standalone Bash runtime, no Python or companion files.
 # MIT License; https://github.com/satsuki887/naive-update
+# Upstream recipes are literal text; validation intentionally isolates HOME in a subshell.
+# shellcheck disable=SC2016,SC2030,SC2031
 set -Eeuo pipefail
 umask 077
 VERSION=2.0.0
@@ -38,7 +40,7 @@ state_init() {
     root
     [[ $SERVICE =~ ^[a-zA-Z0-9_@.-]+\.service$ && $SERVICE != -* ]] || die '服务名称无效'
     [[ $STATE == /* && $(readlink -m -- "$STATE") == "$STATE" && ! -L $STATE ]] || die '状态目录必须为无符号链接的绝对路径'
-    [[ -d $STATE ]] || mkdir -m700 -p -- "$STATE"
+    [[ -d $STATE ]] || mkdir -p -- "$STATE"
     [[ $(stat -c %u "$STATE") == 0 && $(stat -c %a "$STATE") == 700 ]] || die '状态目录必须 root:root、0700'
     exec 9>"$STATE/lock"; flock -n 9 || die '另一个管理操作正在运行'
     [[ ! -e $STATE/pending.json || ${1:-} == recover ]] || die '存在未完成事务，请先执行 recover'
@@ -71,7 +73,7 @@ copy_atomic() {
 }
 snapshot() {
     local kind=$1 id backup was_active=false enabled=false f had_bin=false had_config=false had_unit=false
-    id="$(now)-$(openssl rand -hex 4)"; backup=$STATE/backups/$id; mkdir -m700 -p "$backup"
+    id="$(now)-$(openssl rand -hex 4)"; backup=$STATE/backups/$id; mkdir -p "$backup"
     if [[ $kind != bbr ]]; then
         active && was_active=true
         systemctl is-enabled --quiet "$SERVICE" 2>/dev/null && enabled=true
@@ -139,7 +141,7 @@ on_exit() {
 }
 validate_config() (
     set -Eeuo pipefail
-    local executable=$1 candidate=$2 log=$3 pid arg prev='' actual_config='' uid gid groups cwd var user
+    local executable=$1 candidate=$2 log=$3 pid arg prev='' actual_config='' uid gid groups cwd var user runtime_home
     if active; then
         pid=$(systemctl show "$SERVICE" -p MainPID --value); [[ $pid =~ ^[0-9]+$ && $pid -gt 1 ]] || die '服务主进程无效'
         [[ /proc/$pid/exe -ef $BIN ]] || die '服务主进程不是目标 Caddy'
@@ -152,11 +154,11 @@ validate_config() (
         [[ $(readlink -m "$actual_config") == "$(readlink -m "$CONFIG")" ]] || die '运行配置路径不匹配'
         uid=$(awk '/^Uid:/{print $3}' "/proc/$pid/status"); gid=$(awk '/^Gid:/{print $3}' "/proc/$pid/status")
         groups=$(awk '/^Groups:/{for(i=2;i<=NF;i++)printf "%s%s",(i==2?"":","),$i}' "/proc/$pid/status")
-        while IFS= read -r -d '' var; do [[ $var != *=* ]] || export "$var"; done <"/proc/$pid/environ"
+        while IFS= read -r -d '' var; do [[ $var != *=* ]] || export "${var?}"; done <"/proc/$pid/environ"
     else
         user=${VALIDATE_USER:-$(systemctl show "$SERVICE" -p User --value 2>/dev/null || :)}; user=${user:-root}
         [[ -n ${VALIDATE_USER:-} || -z $(systemctl show "$SERVICE" -p EnvironmentFiles --value 2>/dev/null || :) ]] || die '服务停止且有 EnvironmentFile；请先启动再验证'
-        uid=$(id -u "$user"); gid=$(id -g "$user"); groups=$(id -G "$user" | tr ' ' ','); cwd=${VALIDATE_CWD:-/}; export HOME="$(getent passwd "$user" | cut -d: -f6)"
+        uid=$(id -u "$user"); gid=$(id -g "$user"); groups=$(id -G "$user" | tr ' ' ','); cwd=${VALIDATE_CWD:-/}; runtime_home=$(getent passwd "$user" | cut -d: -f6); export HOME=$runtime_home
     fi
     cd "$cwd"
     if [[ -n $groups ]]; then setpriv --reuid "$uid" --regid "$gid" --groups "$groups" -- "$executable" validate --config "$candidate" --adapter caddyfile >"$log" 2>&1
@@ -208,6 +210,8 @@ plan() {
     mapfile -t PATCHES < <(grep -oE '\$GITHUB_WORKSPACE/[A-Za-z0-9_.-]+\.patch' <<<"$tokens" | cut -d/ -f2)
     ((${#PATCHES[@]})) || die '补丁列表为空'; for line in "${PATCHES[@]}"; do regular "$src/$line"; done
     while IFS= read -r line; do
+        # This matches the literal upstream CI command, not an executable home path.
+        # shellcheck disable=SC2088
         case $line in "printf 'CADDY_VERSION="*|"git -C .caddy-bbr apply "*|"go install github.com/caddyserver/xcaddy/cmd/xcaddy@"*|'~/go/bin/xcaddy build "$CADDY_VERSION"'*) :;; *) die '上游 CI 新增步骤，需要人工适配';; esac
     done < <(sed -nE 's/^ *- run: (.*)$/\1/p' "$src/.github/workflows/build.yml")
     go_line=$(grep 'go-version:' "$src/.github/workflows/build.yml"); [[ $go_line =~ ([0-9]+)\.([0-9]+)\.x ]] || die '无法识别 Go 要求'
@@ -303,7 +307,7 @@ valid_credential() { [[ -n $1 && $1 != *'{'* && $1 != *'}'* && ! $1 =~ [[:cntrl:
 render_config() {
     local domain=$1 port=$2 username=$3 password=$4 mode=$5 tls_value=$6 camouflage=$7 www=$8
     valid_domain "$domain" || die '域名无效'; [[ $port =~ ^[0-9]+$ && $port -gt 0 && $port -le 65535 ]] || die '端口无效'
-    valid_credential "$username" && [[ $username != *:* ]] && valid_credential "$password" || die '凭证不能为空或含控制字符、花括号；用户名不能含冒号'
+    if ! valid_credential "$username" || [[ $username == *:* ]] || ! valid_credential "$password"; then die '凭证不能为空或含控制字符、花括号；用户名不能含冒号'; fi
     printf '{\n'; [[ $camouflage != local ]] || printf '\torder forward_proxy before file_server\n'
     printf '\tlog {\n\t\texclude http.log.error\n\t}\n}\n'
     if [[ $port == 443 ]]; then printf ':443, %s {\n' "$domain"; else printf ':%s, %s:%s {\n' "$port" "$domain" "$port"; fi
@@ -460,14 +464,15 @@ EOF
 }
 adapt_json() { tmpdir; ADAPTED=$REPLY/config.json; "$BIN" adapt --config "$CONFIG" --adapter caddyfile >"$ADAPTED"; }
 share() {
-    local domain ports entry username password port proxy link
+    local domain ports entry username password port proxy link credentials
     ask '显示包含代理密码的分享信息？' || return 0
     adapt_json
-    domain=$(jq -r '[..|objects|.host?//empty|select(type=="array")|.[]][0]//empty' "$ADAPTED")
+    domain=$(jq -r '[..|objects|.host? // empty|select(type=="array")|.[]][0] // empty' "$ADAPTED")
     [[ -n $domain ]] || prompt domain '未自动识别域名，请输入证书域名'
     valid_domain "$domain" || die '域名无效'
     ports=$(jq -r '[.apps.http.servers[]?.listen[]?|capture(":(?<port>[0-9]+)$").port]|unique|.[]' "$ADAPTED")
     [[ -n $ports ]] || die '无法识别监听端口'
+    credentials=$(jq -er '[..|objects|select(.handler? == "forward_proxy")|.auth_credentials[]?|@base64d|@base64d]|if length>0 then .[] else error("no naive credentials") end' "$ADAPTED")
     while IFS= read -r entry; do
         username=${entry%%:*}; password=${entry#*:}
         username=$(printf %s "$username" | jq -sRr @uri); password=$(printf %s "$password" | jq -sRr @uri)
@@ -478,7 +483,7 @@ share() {
             printf '%s' "$proxy" | jq -Rs '{listen:"socks://127.0.0.1:1080",proxy:.}'
             if command -v qrencode >/dev/null; then qrencode -t ANSIUTF8 "$link"; fi
         done <<<"$ports"
-    done < <(jq -er '..|objects|select(.handler?=="forward_proxy")|.auth_credentials[]?|@base64d|@base64d' "$ADAPTED")
+    done <<<"$credentials"
 }
 cert_status() {
     local cert key
@@ -529,11 +534,14 @@ deps() {
     else die '请手工安装 bash curl jq ca-certificates tar gzip coreutils util-linux openssl git'; fi
 }
 warp_install() {
-    local work id codename version
+    local work id codename version os_values
+    local -a os_info
     ask '添加 Cloudflare 官方软件源并安装 WARP？不会连接或修改默认路由' || return 0
     tmpdir; work=$REPLY
     # /etc/os-release is a root-owned operating-system file, not remote input.
-    id=$(. /etc/os-release; printf %s "$ID"); codename=$(. /etc/os-release; printf %s "${VERSION_CODENAME:-}"); version=$(. /etc/os-release; printf %s "${VERSION_ID%%.*}")
+    # shellcheck disable=SC1091
+    os_values=$(. /etc/os-release; printf '%s\n%s\n%s\n' "$ID" "${VERSION_CODENAME:-}" "${VERSION_ID%%.*}")
+    mapfile -t os_info <<<"$os_values"; id=${os_info[0]}; codename=${os_info[1]}; version=${os_info[2]}
     if command -v apt-get >/dev/null; then
         [[ $id == debian || $id == ubuntu ]] || die '请按 Cloudflare 官方文档为该发行版安装 WARP'
         [[ $codename =~ ^[a-z]+$ ]] || die '发行版代号无法识别'; need gpg
@@ -576,7 +584,7 @@ network_check() {
     say '这些结果表示出口与网页可达性；403 可能是反爬验证，不能单凭状态码认定 ChatGPT 地区支持或 Netflix 播放授权。'
 }
 doctor() {
-    local cmd file sections
+    local cmd file
     say "naive-update $VERSION / $(uname -srmo)"
     for cmd in curl jq openssl systemctl setpriv flock git go qrencode warp-cli; do say "$cmd: $(command -v "$cmd" || printf '未安装')"; done
     if [[ -x $BIN ]]; then "$BIN" version; "$BIN" build-info; fi
