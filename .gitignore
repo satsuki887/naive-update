@@ -11,3 +11,4 @@ state/
 *.key
 Caddyfile
 .env
+LOCAL_NOTES.md

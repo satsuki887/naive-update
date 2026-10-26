@@ -393,7 +393,8 @@ def assert_mutable(path):
     flags = array.array("L", [0])
     with open(path, "rb") as stream:
         try:
-            fcntl.ioctl(stream.fileno(), 0x80086601, flags, True)
+            request = 0x80000000 | (flags.itemsize << 16) | (ord("f") << 8) | 1
+            fcntl.ioctl(stream.fileno(), request, flags, True)
         except OSError as exc:
             if exc.errno not in (25, 95):
                 raise
@@ -445,6 +446,8 @@ class Service:
         if pid <= 1 or not os.path.samefile(proc / "exe", self.binary):
             raise Failure("服务主进程与目标二进制不一致，拒绝替换")
         argv = (proc / "cmdline").read_bytes().decode().rstrip("\0").split("\0")
+        if any(arg in ("--resume", "--envfile") or arg.startswith("--envfile=") for arg in argv):
+            raise Failure("当前不支持 --resume/--envfile 启动；无法确认离线验证与运行配置一致")
         cwd = (proc / "cwd").resolve()
         config = None
         adapter = None
@@ -575,6 +578,8 @@ class Transaction:
         backup.mkdir(parents=True, mode=0o700)
         old_hash = sha256(self.service.binary)
         new_hash = sha256(source)
+        if build_info and build_info.get("sha256", new_hash) != new_hash:
+            raise Failure("构建产物在校验后发生改变，停止安装")
         copy_binary(self.service.binary, backup / "caddy", self.service.binary)
         if sha256(backup / "caddy") != old_hash:
             raise Failure("旧版本备份校验失败")

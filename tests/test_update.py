@@ -221,6 +221,14 @@ class TransactionTests(Workspace):
         self.assertEqual(self.service.restart_count, 0)
         self.assertFalse(self.tx.pending.exists())
 
+    def test_artifact_changed_after_initial_verification_blocks_install(self):
+        digest = app.sha256(self.source)
+        self.source.write_bytes(b"unexpected change")
+        with self.assertRaises(app.Failure):
+            self.tx.activate(self.source, {"sha256": digest})
+        self.assertEqual(self.service.binary.read_bytes(), b"old-binary")
+        self.assertEqual(self.service.restart_count, 0)
+
     def test_failed_restart_restores_old_binary(self):
         self.service.fail_new = True
         with self.assertRaises(app.Failure):

@@ -153,7 +153,7 @@ sudo bash naive-update.sh install --build ./build --yes \
   --state-dir /var/lib/naive-update
 ```
 
-执行回滚、恢复时需使用相同路径和服务名称。当前安装器拒绝符号链接二进制、immutable / append-only 二进制、停止中的服务，以及无法确认主进程或配置路径的包装启动方式。使用动态 systemd 用户、沙盒路径或复杂命名空间的服务，需要管理员单独评估；工具不会改写 unit 来绕过限制。
+执行回滚、恢复时需使用相同路径和服务名称。当前安装器拒绝符号链接二进制、immutable / append-only 二进制、停止中的服务、`--resume` / `--envfile` 启动，以及无法确认主进程或配置路径的包装启动方式。systemd `EnvironmentFile` 可继续使用，因为其变量已存在于服务的启动环境中。使用动态 systemd 用户、沙盒路径或复杂命名空间的服务，需要管理员单独评估；工具不会改写 unit 来绕过限制。
 
 ## 从旧 `na` 脚本迁移
 
