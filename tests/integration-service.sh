@@ -50,7 +50,9 @@ bash "$SCRIPT" config reload --yes
 original_hash=$(sha256sum "$NAIVE_CONFIG")
 bash "$SCRIPT" install --build "$BUILD" --yes
 [[ $(sha256sum "$NAIVE_CONFIG") == "$original_hash" ]]
-bash "$SCRIPT" share --yes >"$BASE/share-output"
+if ! bash -x "$SCRIPT" share --yes >"$BASE/share-output" 2>"$BASE/share-trace"; then
+    tail -n 100 "$BASE/share-trace"; cat "$BASE/share-output"; exit 1
+fi
 if ! grep -q 'ci-user:ci-password%3Anot-a-secret@proxy.example.test:18443' "$BASE/share-output"; then
     # This file contains only the public dummy credentials defined in the fixture.
     cat "$BASE/share-output"; echo 'Fixture sharing export did not match' >&2; exit 1
