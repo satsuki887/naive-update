@@ -211,9 +211,13 @@ def build(args):
                 run(["git", "-C", caddy_source, "apply", "--check", patch], log=log)
                 run(["git", "-C", caddy_source, "apply", patch], log=log)
             env = os.environ.copy()
+            for key in list(env):
+                if key.startswith("XCADDY_"):
+                    env.pop(key)
             env.update(GOTOOLCHAIN="local", GO111MODULE="on", CGO_ENABLED="0", GOOS="linux",
                        GOPROXY="https://proxy.golang.org,direct", GOSUMDB="sum.golang.org",
-                       GOPRIVATE="", GONOSUMDB="", GONOPROXY="", GOWORK="off", GOFLAGS="",
+                       GOPRIVATE="", GONOSUMDB="", GONOPROXY="", GOINSECURE="",
+                       GOWORK="off", GOFLAGS="", GOEXPERIMENT="",
                        GOENV="off", GOMAXPROCS=str(args.jobs), GOBIN=str(work / "tools"),
                        XCADDY_SETCAP="0")
             # Ignore cross-compilation settings inherited from a login shell.
@@ -765,7 +769,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, interrupted)
     try:
         sys.exit(main())
-    except (Failure, OSError, ValueError, KeyError) as exc:
+    except (Failure, OSError, ValueError, KeyError, tarfile.TarError) as exc:
         print("错误：" + str(exc), file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:

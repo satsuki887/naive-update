@@ -72,6 +72,17 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 7
+      - name: Keep compiler diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: compiler-log-${{ matrix.arch }}
+          path: |
+            .naive-build-*/build.log
+            build/build.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
   publish:
     needs: [discover, build]
     runs-on: ubuntu-24.04

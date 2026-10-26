@@ -24,6 +24,10 @@ def main():
         validator = root / "original-validator"
         shutil.copy2(source, binary)
         shutil.copy2(source, validator)
+        capability = None
+        if shutil.which("setcap"):
+            subprocess.run(["setcap", "cap_net_bind_service=+ep", binary], check=True)
+            capability = os.getxattr(binary, "security.capability")
         config = root / "Caddyfile"
         config.write_text("{\n admin off\n auto_https off\n}\nhttp://127.0.0.1:0 {\n respond ci\n}\n")
         unit.write_text(f"[Unit]\nDescription=Isolated naive-update test\n[Service]\nType=simple\n"
@@ -39,6 +43,8 @@ def main():
             transaction = Transaction(root / "state", service)
             with transaction.lock():
                 transaction.activate(source, {"test": "real-systemd"})
+                if capability is not None:
+                    assert os.getxattr(binary, "security.capability") == capability
                 transaction.rollback()
                 broken = root / "broken-caddy"
                 broken.write_text("#!/usr/bin/python3\nimport os,sys\n"
