@@ -1,0 +1,40 @@
+{
+    http_port 4037
+    servers {
+        protocols h1 h2
+    }
+    log {
+        exclude http.log.error
+    }
+}
+:18443, proxy.example.test:18443 {
+    tls {$NAIVE_TEST_CERT} {$NAIVE_TEST_KEY}
+    @denied remote_ip 203.0.113.0/24 198.51.100.0/24
+    log {
+        output file {$NAIVE_TEST_LOG} {
+            roll_size 20mb
+            roll_keep 5
+        }
+        format filter {
+            wrap json
+            fields {
+                request>headers delete
+                request>tls delete
+                resp_headers delete
+            }
+        }
+    }
+    route {
+        abort @denied
+        forward_proxy {
+            basic_auth ci-user "ci-password:not-a-secret"
+            hide_ip
+            hide_via
+            probe_resistance
+            acl {
+                allow 172.20.0.2
+            }
+        }
+        reverse_proxy https://example.org
+    }
+}

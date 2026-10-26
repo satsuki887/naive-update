@@ -30,7 +30,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_RELEASE: ${{ inputs.release }}
-        run: python3 ci/prepare_release.py
+        run: bash ci/prepare-release.sh
   build:
     needs: discover
     if: needs.discover.outputs.needed == 'true'
@@ -53,19 +53,19 @@ jobs:
           go-version: stable
           check-latest: true
           cache: false
-      - run: python3 -m unittest discover -s tests -v
+      - run: bash tests/test-shell.sh
       - name: Build pinned official source with its CI patches
         env:
           RELEASE: ${{ needs.discover.outputs.upstream }}
-        run: python3 naive_update.py build --release "$RELEASE" --output build --jobs 2
+        run: bash naive-update.sh build --release "$RELEASE" --output build --jobs 2 --yes
       - name: Validate with a harmless isolated configuration
         run: |
           printf '{\n auto_https off\n}\nhttp://127.0.0.1:18080 {\n route {\n forward_proxy {\n basic_auth ci-user ci-test-only-password\n hide_ip\n hide_via\n probe_resistance\n }\n respond "ci"\n }\n}\n' > /tmp/naive-ci-Caddyfile
           build/caddy validate --config /tmp/naive-ci-Caddyfile --adapter caddyfile
       - name: Package
-        run: python3 ci/package.py build dist
+        run: bash ci/package.sh build dist
       - name: Isolated real systemd install and rollback test
-        run: sudo --preserve-env=GITHUB_ACTIONS python3 tests/integration_service.py build/caddy
+        run: sudo --preserve-env=GITHUB_ACTIONS bash tests/integration-service.sh build
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: server-${{ matrix.arch }}
@@ -78,7 +78,7 @@ jobs:
         with:
           name: compiler-log-${{ matrix.arch }}
           path: |
-            .naive-build-*/build.log
+            .naive-build.*/build.log
             build/build.log
           include-hidden-files: true
           if-no-files-found: ignore
@@ -116,4 +116,4 @@ jobs:
       - name: Download the published release through the user-facing command
         env:
           UPSTREAM: ${{ needs.discover.outputs.upstream }}
-        run: python3 naive_update.py download --release "$UPSTREAM" --output downloaded-release
+        run: bash naive-update.sh download --release "$UPSTREAM" --output downloaded-release

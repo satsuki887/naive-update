@@ -1,0 +1,21 @@
+name: Publish standalone Shell tool
+on:
+  push:
+    tags: ['tool-v*']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: bash tests/test-shell.sh
+      - run: shellcheck naive-update.sh ci/*.sh tests/*.sh
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          sha256sum naive-update.sh > SHA256SUMS-tool
+          gh release create "$GITHUB_REF_NAME" naive-update.sh SHA256SUMS-tool --title "naive-update $GITHUB_REF_NAME" --notes 'Standalone interactive Bash tool. No Python or companion runtime files. Server binaries are distributed in server-* releases.' --latest=false

@@ -13,10 +13,45 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - run: python3 -m unittest discover -s tests -v
-      - run: bash -n naive-update.sh && shellcheck naive-update.sh
+      - run: bash tests/test-shell.sh
+      - run: shellcheck naive-update.sh ci/*.sh tests/*.sh
       - name: CLI smoke test
         run: |
-          ./naive-update.sh --help
-          ./naive-update.sh --version
-          python3 -m py_compile naive_update.py ci/*.py
+          bash naive-update.sh --help
+          bash naive-update.sh --version
+  integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: bash naive-update.sh download --output ci-build
+      - run: sudo --preserve-env=GITHUB_ACTIONS bash tests/integration-service.sh ci-build
+      - name: Validate clean generated standard Caddyfile
+        run: |
+          source naive-update.sh
+          render_config example.com 443 ci-user ci-password auto '' local /var/lib/naive-caddy/www > /tmp/Caddyfile.standard
+          ci-build/caddy validate --config /tmp/Caddyfile.standard --adapter caddyfile
+  source-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: stable
+          cache: false
+      - run: bash naive-update.sh build --output shell-build --jobs 2 --yes
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-compiler-diagnostics
+          path: .naive-build.*/build.log
+          include-hidden-files: true

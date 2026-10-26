@@ -12,3 +12,7 @@ state/
 Caddyfile
 .env
 LOCAL_NOTES.md
+.devtools/
+.naive-build.*/
+ci-build/
+shell-build/

@@ -1,185 +1,174 @@
 # naive-update
 
-按 NaiveProxy 官方服务端构建流程升级 **Caddy + Naive forwardproxy**。
+独立的交互式 **Bash 运维工具**：全新安装 Naive 服务端、管理 Caddy、升级内核、证书与分享、BBR 和 WARP。运行时只需一个 `naive-update.sh`，无需 Python 或其他配套源码文件。
 
-提供本地源码编译，以及本仓库 GitHub Actions 自动编译的 Linux amd64 / arm64 安装包。支持安装前验证、备份、原子替换、失败回滚和中断恢复。
+本工具由第三方维护，服务端使用 Naive 官方 `klzgrad/forwardproxy` 源码及其 Caddy 版本和补丁。GitHub Actions 定时编译 Linux amd64 / arm64 安装包。没有脚本自更新，也不使用原博主的脚本或二进制。
 
-本项目是独立的第三方升级工具，不是 NaiveProxy 官方项目，不包含原一键脚本代码。没有脚本自更新功能，也不下载原博主的程序或安装包。
-
-## 适用范围
-
-- 已经安装并通过 systemd 运行的 Caddy / Naive 服务端。
-- 默认路径：`/usr/bin/caddy`、`/etc/caddy/Caddyfile`、`caddy.service`。
-- Linux，Python **3.9+**。本地编译另需 Git 和满足官方 CI 要求的 Go。
-- 安装要求 root；服务必须正在运行，且主进程直接执行目标 `caddy run --config ...`。
-- 支持沿用现有域名、账号、证书、端口、伪装站和 systemd 配置。
-- 不负责首次安装、证书签发、客户端配置、卸载、网络加速或 BBR 内核设置。
-
-## 快速使用
-
-先获取工具。脚本与 Python 文件应保留在同一目录：
+## 获取并运行
 
 ```bash
-git clone https://github.com/satsuki887/naive-update.git
-cd naive-update
-bash naive-update.sh doctor
-bash naive-update.sh check
+curl -fL --proto '=https' --proto-redir '=https' \
+  https://raw.githubusercontent.com/satsuki887/naive-update/main/naive-update.sh \
+  -o naive-update.sh
+sudo bash naive-update.sh
 ```
 
-### 方式一：使用本仓库 CI 编译包
+首次以 root 打开交互菜单会把当前单文件安装为 **`/usr/bin/naive-update`**。以后直接输入：
 
 ```bash
-# 只下载，不替换程序、不重启服务；自动匹配 amd64 / arm64
+sudo naive-update
+```
+
+默认不会覆盖旧 `/usr/bin/na`。菜单 13 可以备份旧脚本后接管 `na` 命令。工具不自动下载自身更新；手工下载新单文件并再次运行即可安装新工具版本。
+
+基础依赖是常见系统工具：Bash 4.3+、curl、jq、OpenSSL、GNU tar/coreutils、util-linux（flock/setpriv）、systemd。本地编译另需 Git、Go；二维码需要可选的 qrencode。菜单会检查依赖，可通过系统源安装。Go 不足时可安装 go.dev 提供、经过摘要校验的独立工具链，不覆盖系统 Go，也不写旧 Go 软件源。
+
+## 交互菜单
+
+| 编号 | 功能 |
+|---|---|
+| 1 | 全新安装：CI 包或本地编译、域名和凭证、自动 ACME 或已有证书、静态/反代伪装、systemd |
+| 2 | 卸载二进制和本地 unit，保留配置、证书、用户数据及恢复备份 |
+| 3 | Caddyfile 手工编辑、验证、重载、写入可选示例 |
+| 4 | 启动、停止、重启、开机启动及状态 |
+| 5 | 官方服务端版本检查与工具信息 |
+| 6 | CI 包升级、本地源码编译升级、安装已有构建 |
+| 7 | 分享链接、Naive 客户端 JSON、可选终端二维码 |
+| 8 | systemd 日志 |
+| 9 | 证书状态、重载、导入、已有 acme.sh 的列表/续期 |
+| 10 | Cloudflare 官方 WARP 安装、状态、本地代理连接/断开、出口可达性检测 |
+| 11 | BBR + FQ、cubic + fq_codel、从备份恢复原网络参数 |
+| 12 | 备份与回滚、中断事务恢复 |
+| 13 | 安装快捷命令、可选接管 na |
+| 14 | 系统诊断、安装依赖 |
+
+## 新服务器安装
+
+准备域名，先把 A/AAAA 记录指向这台服务器。下载单文件，打开菜单 1。选择使用本仓库 CI 包或按官方源码本地编译，然后填写域名、监听端口、用户名和密码。
+
+证书优先使用 **Caddy 自带 ACME 自动申请与续期**，不需要再安装 acme.sh；也可导入已有完整链证书和无口令私钥。自动 ACME 需要域名解析正确，公网 80 或 443 能完成挑战。外部证书会检查有效期、域名和公私钥匹配，复制到服务可读的专用目录。
+
+全新安装使用独立 `naive-caddy` 用户和用户组，以 `CAP_NET_BIND_SERVICE` 绑定低端口，启用 systemd `NoNewPrivileges`、`PrivateTmp`、`ProtectHome` 等设置。数据放在 `/var/lib/naive-caddy`；管理状态及备份放在 root 私有的 `/var/lib/naive-update`。
+
+部署向导不会关闭防火墙或替你操作云安全组。按实际端口放行 TCP；默认 Caddy 支持 HTTP/3，需要时放行相同 UDP 端口。自动 HTTP 重定向和 HTTP ACME 挑战通常需要 TCP 80。
+
+### 默认 Caddyfile
+
+本地静态伪装模式按官方当前示例生成：
+
+```caddyfile
+{
+    order forward_proxy before file_server
+    log {
+        exclude http.log.error
+    }
+}
+:443, example.com {
+    forward_proxy {
+        basic_auth "user" "password"
+        hide_ip
+        hide_via
+        probe_resistance
+    }
+    encode
+    file_server {
+        root /var/lib/naive-caddy/www
+    }
+}
+```
+
+向导填写 ACME 邮箱时加 `tls 邮箱`；使用外部证书时加 `tls 证书 私钥`。默认不限制 h1/h2/h3、不拦截 IP、不额外放行私网目标，也不使用旧脚本的随机 HTTP 端口或冗余 HTTPS 上游 Host 覆盖。
+
+选择 HTTPS 反代伪装时，使用显式 `route` 依序运行 forward_proxy 和 reverse_proxy。Caddy 2.11+ 会自动处理 HTTPS 上游 Host，不重新添加旧模板的 `header_up Host {upstream_hostport}`。
+
+主配置在 **`/etc/caddy/Caddyfile`**。示例在 **`/etc/caddy/examples/`**，包括标准模板和可选的 h1/h2、地址拦截、私网 ACL、隐私访问日志、多用户、多端口、WARP upstream 片段。示例不被主配置自动 import。
+
+## 现有部署与手工编辑
+
+已有 Caddy 二进制、Caddyfile 或同名服务时，禁止通过菜单 1 覆盖安装。直接使用管理/升级功能。
+
+**内核升级只替换二进制，不重写 Caddyfile 或 unit**。现有协议限制、matcher、ACL、日志过滤、证书路径与反代设置都保留。可以继续用自己的编辑器编辑文件，然后：
+
+```bash
+sudo naive-update config validate
+sudo naive-update config reload
+```
+
+也可以用 `config edit`：在同目录副本中调用 `$VISUAL` / `$EDITOR`（默认 vi），验证通过后备份并应用。失败时不替换原文件。工具不做宽泛 sed 替换，也不按新模板覆盖用户维护的配置。
+
+外部直接编辑之后的 `reload` 会备份当时磁盘文件；它无法凭空找回编辑之前的内容。需要原文件恢复点时，请先自行备份，或使用菜单的副本编辑方式。
+
+## 内核升级
+
+```bash
+# 分两步：只获取，审核后再安装
 bash naive-update.sh download --output ./build
-
-# 安装已有构建，明确允许替换二进制并重启
 sudo bash naive-update.sh install --build ./build --yes
-```
 
-下载地址固定为本仓库 Releases。工具校验压缩包 SHA256、GitHub 提供的资产摘要（若存在）、包内二进制 SHA256，以及版本和架构。
-
-也可以在 [Releases](https://github.com/satsuki887/naive-update/releases) 手动下载压缩包与 `SHA256SUMS`，核对后解压，再通过 `install --build 解压目录` 安装。
-
-> 本仓库的包由本仓库 CI 从官方源码编译，并不是官方签名的二进制。SHA256 用于完整性检查，不等于独立的发布者签名。请只安装自己信任来源的构建目录；安装阶段会执行其中的 Caddy 来验证配置。
-
-### 方式二：在服务器本地编译
-
-```bash
-# 普通用户也可编译。--output 必须是尚不存在的目录
-bash naive-update.sh build --output ./build-local --jobs 2
-
-# 检查后再安装
+# 或服务器本地编译
+bash naive-update.sh build --release v2.11.7-naive2 --output ./build-local --jobs 2
 sudo bash naive-update.sh install --build ./build-local --yes
+
+# 获取并安装
+sudo naive-update update --source download --output /var/lib/naive-update/artifacts/new-version --yes
 ```
 
-也可以合并执行：
+输出目录必须尚不存在，避免将旧残留程序误判为新构建。编译会固定官方服务端发布标签、forwardproxy 提交、Caddy 版本与提交、xcaddy 版本；按该标签的官方 CI 顺序应用补丁。遇到未知 CI 步骤、缺少补丁或补丁应用失败时停止。Go 使用进程级环境、官方模块代理和校验数据库，不执行 `go env -w`，不修改 `/etc/profile`。
+
+服务端版本采用 `v2.x.y-naive…`，与 Naive 客户端的 Chromium `v154…` 版本独立。
+
+CI 包来自本仓库 Releases，是本仓库从官方源码编译的产物，并非 Naive 官方签名二进制。工具检查压缩包摘要、GitHub 资产摘要（若提供）、包内二进制摘要和版本/架构。摘要代表完整性，不等于独立签名；请只安装信任来源的构建目录，因为验证配置时会执行其中的 Caddy。
+
+## 备份与恢复
+
+安装/配置变更会保留备份，验证后才原子替换目标文件。验证使用运行中服务的用户、组、环境与工作目录。新版本启动失败时自动恢复旧版；状态目录为 root:root、0700。二进制升级的回滚只恢复二进制，不覆盖后来手工修改的配置。
 
 ```bash
-sudo bash naive-update.sh update --output ./build-new --jobs 2 --yes
+sudo naive-update backups
+sudo naive-update rollback --yes          # 恢复最近一次操作前状态
+sudo naive-update rollback BACKUP_ID --yes
+sudo naive-update recover --yes           # 断电/SIGKILL 等留下 pending.json 后
 ```
 
-指定已知官方**服务端**发布标签，可避免 latest 查询受 GitHub API 限流影响：
+恢复遇到文件损坏、文件不可写或 systemd 自身异常时可能需要人工处理；事务和备份保留。不会自动解除 immutable，不会自动删除备份。
+
+备份含主配置、二进制、本地 unit 及 unit 展开快照，可能包含密码。证书、网站文件、导入配置与 EnvironmentFile 不属于完整恢复范围；它们不会因内核升级被改写。默认卸载保留这些内容和管理工具，便于恢复。
+
+原 Python 1.x 管理器的未完成事务应先用原版本恢复；2.x 使用新的事务格式，不直接解释旧事务。
+
+## 证书、WARP、BBR
+
+- Caddy 自动 ACME 按自身策略续期，不定时删除证书强制重签。`cert status` 查看外部证书及服务数据，`cert reload` 验证后重载。
+- `cert import` 复制和验证证书，输出可加入 Caddyfile 的 tls 行；按你的习惯由你编辑文件。
+- 已安装的 root 自有 acme.sh 可通过菜单列出/续期；不再下载旧博客的 ACME 包装脚本。外部证书由你配置 acme.sh 的 install-cert 目标路径与成功 reload 钩子。
+- WARP 使用 Cloudflare 官方签名仓库。仅在所装客户端支持 CLI proxy 模式时连接本地代理，并使用 MASQUE；不自动切换整机默认路由。Naive 需要使用该出口时，可手工添加示例中的 `upstream socks5://127.0.0.1:40000`。
+- WARP 发行版/架构支持和模式以 Cloudflare 当前客户端为准，受管理的 Zero Trust 客户端可能禁止本地模式修改。RPM 依赖可能需要 EPEL。
+- 出口检查显示 IP/地区、WARP 状态、ChatGPT/Netflix HTTP 可达性；HTTP 403 与反爬有关，不能简单当作地区封锁或播放授权结论。
+- BBR 使用当前系统内核，写入独立 sysctl 文件并保存修改前参数。不会装来源不明的 BBR Plus 内核、刷写整份 sysctl、清空防火墙或改变 SSH 配置。
+
+## GitHub CI
+
+每 6 小时检查官方 forwardproxy 新稳定发布，分别在原生 amd64 / arm64 runner 上编译，两个架构都成功后才发布 `server-*` Release。可手动 Run workflow。定时任务可能延迟；公开仓库长期无活动时 GitHub 可能暂停，需要重新启用。
+
+测试包含 ShellCheck、输入与配方验证、包内容/摘要检查、真实新安装（非 root 服务）、自定义配置保留、启动失败恢复、手动回滚和事务恢复。测试仅在一次性 runner 中创建服务，不连接生产服务器。
+
+`tool-v*` 标签发布单文件工具和摘要，且不抢占服务端包的 latest 标记。脚本安装到服务器后不会自动更新自身。
 
 ```bash
-bash naive-update.sh build --release v2.11.7-naive2 --output ./build-pinned
+bash tests/test-shell.sh
+shellcheck naive-update.sh ci/*.sh tests/*.sh
 ```
 
-每次编译使用新的输出目录，避免把上次残留程序误当作本次成果。编译失败时保留独立工作目录及 `build.log`；不会进入安装阶段。
+默认路径可用 `NAIVE_BIN`、`NAIVE_CONFIG`、`NAIVE_SERVICE`、`NAIVE_UNIT`、`NAIVE_STATE`、`NAIVE_TOOL`、`NAIVE_DATA` 调整；路径与服务名称必须在备份/恢复时保持一致。主配置需是 Caddyfile，当前不支持 --resume/--envfile、符号链接二进制或无法确认的包装主进程。
 
-## GitHub 自动编译
+## 评估与上游来源
 
-`.github/workflows/release.yml` 每 **6 小时**检查一次 `klzgrad/forwardproxy` 的最新稳定服务端发布。GitHub 定时任务可能延迟，非即时通知。
+- [完整功能与兼容性评估](docs/design-review.md)
+- [旧版本编译故障分析](docs/diagnosis.md)
+- [Naive 官方服务端说明](https://github.com/klzgrad/naiveproxy#server-setup)
+- [官方构建流程](https://github.com/klzgrad/forwardproxy/blob/naive/.github/workflows/build.yml)
+- [Caddy HTTPS 上游行为](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#https)
+- [Caddy 自动 HTTPS / ACME](https://caddyserver.com/docs/automatic-https)
+- [Cloudflare 官方软件源](https://pkg.cloudflareclient.com/)
 
-1. 发现尚未完整发布的官方版本。
-2. 在原生 amd64、arm64 Linux runner 上分别编译；使用官方标签的 `CADDY_VERSION` 和补丁应用顺序。
-3. 执行测试及隔离配置验证。
-4. 两个架构都成功后，发布到本仓库 `server-官方版本` Release。
-
-每个 Release 包含：
-
-```text
-naive-server-vX.Y.Z-naiveN-linux-amd64.tar.gz
-naive-server-vX.Y.Z-naiveN-linux-arm64.tar.gz
-SHA256SUMS
-```
-
-压缩包内仅含 `caddy`、`build.json`、`build-info.txt`、`SHA256SUMS`、`LICENSES.txt`。不会打包服务器配置、账号密码、私钥、构建缓存或完整日志。
-
-也可在 **Actions → Build official Naive server → Run workflow** 手动触发，输入指定官方服务端标签。相同版本已有完整发布时跳过编译。新建仓库需启用 Actions；组织策略可能禁止定时任务或 ARM runner。公开仓库长期无活动时 GitHub 可能暂停定时任务，届时需在 Actions 页面重新启用。
-
-发布只使用 GitHub 内置 `GITHUB_TOKEN`，不需要填写个人 PAT；只有发布 job 获得 `contents: write`。构建不会连接你的服务器。
-
-## 本地编译流程
-
-1. 从官方 `klzgrad/forwardproxy` 获取稳定标签并记录实际提交。
-2. 读取该标签的 `CADDY_VERSION` 与官方 CI 支持的构建配方。
-3. 从 `caddyserver/caddy` 获取指定标签并记录提交。
-4. 依序检查、应用官方 CI 使用的补丁。
-5. 将 xcaddy 版本解析并固定后安装至独立工作目录；可以用 `--xcaddy-version vX.Y.Z` 手动固定。
-6. 使用本地已打补丁的 Caddy 和本地 forwardproxy 源码构建。
-7. 检查 Caddy 版本与 `http.handlers.forward_proxy` 模块，生成构建记录和摘要。
-
-当前配方包含 `caddy-sing-quic-bbrv1.patch` 与 `caddy-read-idle-timeout.patch`。补丁列表来自固定标签的 CI，不是单纯跟踪移动分支。遇到不认识的准备步骤、结构或补丁失败时停止，避免继续生成缺少必要补丁的程序。
-
-使用进程级 Go 环境，不执行 `go env -w`，不修改 `/etc/profile`，不导入旧 Go 仓库 GPG 密钥。Go 工具链不足时明确报错，不自动覆盖系统 Go。默认关闭 CGO，amd64 使用通用 v1 指令集；默认两路并行，可通过 `--jobs` 调整。
-
-源码构建会使用当前用户的 Go 下载/编译缓存。Go 模块来自 `proxy.golang.org` 或模块源站，校验使用 `sum.golang.org`；此工具不会把依赖复制到第三方镜像。本地构建记录保证版本可追踪，不承诺跨工具链的逐字节可重现。
-
-## 安装、回滚与恢复
-
-安装会检查运行进程与目标二进制、配置路径一致，并沿用该进程的环境、工作目录和用户身份执行 `caddy validate`。环境变量仅在内存中使用，不写入构建记录。
-
-验证通过后才在同一文件系统中原子替换二进制，保留原属主、权限、扩展属性（包括 capabilities / SELinux 标签），并重启服务。检查服务稳定运行且运行进程的二进制摘要符合预期；失败则恢复备份并再次启动旧版。**进程健康检查不替代客户端代理连通性测试**，升级后仍应实际连接测试。
-
-默认备份目录：
-
-```text
-/var/lib/naive-update/                 # root:root，0700
-  installed.json                     # 当前安装及来源记录
-  pending.json                       # 仅在未完成事务期间存在
-  backups/<时间戳-ID>/
-    caddy                            # 切换前的二进制
-    Caddyfile.snapshot                # 主配置快照，0600
-    systemd/                         # unit 和 drop-in 快照
-    metadata.json
-    validate.log
-```
-
-快照可能含密码或证书路径，勿上传 GitHub。备份不自动删除，由管理员自行管理磁盘空间。证书、导入配置文件、systemd EnvironmentFile 和网站文件不在备份范围内；工具也不修改它们。
-
-```bash
-# 显示本工具安装记录与当前程序信息
-sudo bash naive-update.sh status
-
-# 回到最近一次切换之前的二进制
-sudo bash naive-update.sh rollback --yes
-
-# 指定本工具已保存的备份 ID
-sudo bash naive-update.sh rollback --backup 20261026T120000Z-1234abcd --yes
-
-# 断电、SIGKILL 或自动回滚未完成后，先恢复中断事务
-sudo bash naive-update.sh recover --yes
-```
-
-回滚仅恢复二进制，不覆盖之后手工修改过的配置或证书。回滚本身也会备份当前二进制。存在未完成事务时禁止继续安装，需先执行 `recover`。若 systemd 或旧服务自身已损坏，自动恢复可能失败；事务和备份会保留，便于人工处理。
-
-修改路径的示例（选项放在子命令之后）：
-
-```bash
-sudo bash naive-update.sh install --build ./build --yes \
-  --binary /usr/local/bin/caddy \
-  --config /etc/caddy/Caddyfile \
-  --service caddy.service \
-  --state-dir /var/lib/naive-update
-```
-
-执行回滚、恢复时需使用相同路径和服务名称。当前安装器拒绝符号链接二进制、immutable / append-only 二进制、停止中的服务、`--resume` / `--envfile` 启动，以及无法确认主进程或配置路径的包装启动方式。systemd `EnvironmentFile` 可继续使用，因为其变量已存在于服务的启动环境中。使用动态 systemd 用户、沙盒路径或复杂命名空间的服务，需要管理员单独评估；工具不会改写 unit 来绕过限制。
-
-## 从旧 `na` 脚本迁移
-
-新工具使用自己的名称和目录，不会自动覆盖 `/usr/bin/na`，也不执行旧脚本。请停止使用旧 `na` 的“更新脚本”“更新内核”两个入口，避免它再次下载旧逻辑或覆盖新二进制。
-
-旧菜单中的 Chromium `v154…` 版本标记不会由本工具伪造更新。服务端升级依据 `forwardproxy` 的 `v2.x.y-naive…` 发布；Naive 客户端版本独立管理。
-
-关于编译报错、Go 软件源失效、仓库重复以及文件 immutable，见 [故障分析](docs/diagnosis.md)。本工具通过不依赖旧软件源避开这些问题；`doctor` 只读报告，不擅自解除文件属性或删除系统仓库。
-
-## 测试与限制
-
-```bash
-python3 -m unittest discover -s tests -v
-bash -n naive-update.sh
-```
-
-自动测试覆盖补丁解析、未知配方拒绝、来源和 SHA256 校验、压缩包路径与链接拒绝、安装前验证失败、重启失败恢复、恢复失败保留事务、手动回滚、配置并发变更和备份损坏。Linux CI 另外测试文件权限及扩展属性，并从真实上游源码编译。编译后还会在 runner 内创建临时 systemd 服务，实测安装、手动回滚及启动失败恢复；不会连接生产服务器。
-
-工具不会重写所有系统源来“消除告警”，也没有自动升级正在运行服务器的定时任务。GitHub 定时任务只构建和发布包；服务器是否安装由你决定。
-
-## 上游来源
-
-- [NaiveProxy 官方服务端说明](https://github.com/klzgrad/naiveproxy#server-setup)
-- [Naive forwardproxy 服务端发布](https://github.com/klzgrad/forwardproxy/releases)
-- [官方服务端构建流程](https://github.com/klzgrad/forwardproxy/blob/naive/.github/workflows/build.yml)
-- [Caddy 源码](https://github.com/caddyserver/caddy)
-- [xcaddy](https://github.com/caddyserver/xcaddy)
-
-本工具代码采用 MIT 许可证。构建产物内附上游许可证；上游组件保留各自的许可证。
+工具采用 MIT 许可证；服务端包附上游许可证。公开仓库不含生产认证材料；本地交接记录 `LOCAL_NOTES.md` 不进入 Git。
