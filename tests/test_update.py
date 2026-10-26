@@ -89,6 +89,14 @@ class RecipeTests(Workspace):
         with self.assertRaises(app.Failure):
             app.release_tag("v2.11.7-naive2;touch /tmp/oops")
 
+    def test_service_with_no_supplementary_groups(self):
+        status = "Uid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\nGroups:\t\nNStgid:\t42\n"
+        self.assertEqual(app.process_identity(status), (0, 0, []))
+
+    def test_service_effective_identity_and_groups(self):
+        status = "Uid:\t0\t1000\t0\t0\nGid:\t0\t1001\t0\t0\nGroups:\t1001 1002\n"
+        self.assertEqual(app.process_identity(status), (1000, 1001, [1001, 1002]))
+
 
 class ArtifactTests(Workspace):
     def test_modified_binary_rejected(self):

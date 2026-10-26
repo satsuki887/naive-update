@@ -420,6 +420,16 @@ def copy_binary(source, destination, metadata_from):
         os.fsync(stream.fileno())
 
 
+def process_identity(status):
+    fields = {}
+    for line in status.splitlines():
+        key, separator, value = line.partition(":")
+        if separator:
+            fields[key] = value.split()
+    # Effective IDs determine access; Groups may legitimately be empty.
+    return int(fields["Uid"][1]), int(fields["Gid"][1]), list(map(int, fields["Groups"]))
+
+
 class Service:
     def __init__(self, name, binary, config):
         if not re.fullmatch(r"[A-Za-z0-9_.@-]+", name) or name.startswith("-"):
@@ -455,10 +465,7 @@ class Service:
                 key, value = item.split(b"=", 1)
                 env[os.fsdecode(key)] = os.fsdecode(value)
         status = (proc / "status").read_text()
-        uid = int(re.search(r"^Uid:\s+(\d+)", status, re.M)[1])
-        gid = int(re.search(r"^Gid:\s+(\d+)", status, re.M)[1])
-        groups = list(map(int, re.search(r"^Groups:\s*(.*)$", status, re.M)[1].split()))
-        self.runtime = (env, cwd, (uid, gid, groups), adapter)
+        self.runtime = (env, cwd, process_identity(status), adapter)
 
     def validate(self, candidate, log):
         env, cwd, identity, adapter = self.runtime
