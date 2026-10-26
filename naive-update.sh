@@ -865,12 +865,12 @@ menu_draw() {
     ui_version_rows
     ui_recommendation
     ui_section '操作菜单'
-    ui_pair 1 '安装 / 部署' 6 '内核更新 / 版本对比'
-    ui_pair 2 '卸载服务端' 7 '分享 / 客户端配置'
-    ui_pair 3 'Caddyfile 管理' 8 '运行日志'
-    ui_pair 4 '服务启停' 9 '证书 / ACME'
-    ui_pair 5 '版本检查 / 刷新' 10 'WARP / 出口检测'
-    ui_pair 12 '回滚 / 中断恢复' 11 'BBR / 队列管理'
+    ui_pair 1 '安装 / 部署' 2 '卸载服务端'
+    ui_pair 3 'Caddyfile 管理' 4 '服务启停'
+    ui_pair 5 '版本检查 / 刷新' 6 '内核更新 / 版本对比'
+    ui_pair 7 '分享 / 客户端配置' 8 '运行日志'
+    ui_pair 9 '证书 / ACME' 10 'WARP / 出口检测'
+    ui_pair 11 'BBR / 队列管理' 12 '回滚 / 中断恢复'
     ui_pair 13 '快捷命令' 14 '诊断 / 安装依赖'
     ui_line
     ui_note 'r 刷新状态与官方版本    0 / q 退出    子菜单均可按 0 返回'
