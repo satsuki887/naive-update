@@ -55,3 +55,27 @@ NAIVE_CONFIG=$work/etc/Caddyfile bash -c 'source "$1"; CONFIG=$NAIVE_CONFIG; exa
 ! grep -Eq 'exec python|python3 ' "$SCRIPT" || bad 'runtime Python dependency'; ok 'standalone Shell runtime'
 bash "$SCRIPT" --help >/dev/null; [[ $(bash "$SCRIPT" --version) == 2.0.0 ]] || bad 'version'; ok 'standalone CLI smoke'
 say "Passed $count shell checks"
+if [[ $(uname -s) == Linux ]]; then
+    # Model sysctl entirely in temporary files: never change the runner kernel.
+    STATE=$work/state; BBR_FILE=$work/sysctl/90-test.conf; YES=1
+    printf cubic >"$work/congestion"; printf fq_codel >"$work/qdisc"
+    sysctl() {
+        local op=$1 value key
+        shift
+        case $op in
+            -n) case $1 in net.ipv4.tcp_available_congestion_control) printf 'cubic bbr\n';; net.ipv4.tcp_congestion_control) cat "$work/congestion";; net.core.default_qdisc) cat "$work/qdisc";; *) return 1;; esac;;
+            -w) for value in "$@"; do key=${value%%=*}; case $key in net.ipv4.tcp_congestion_control) printf %s "${value#*=}" >"$work/congestion";; net.core.default_qdisc) printf %s "${value#*=}" >"$work/qdisc";; *) return 1;; esac; done;;
+            -p) while IFS='=' read -r key value; do key=${key// /}; value=${value// /}; case $key in net.ipv4.tcp_congestion_control|net.core.default_qdisc) sysctl -w "$key=$value";; esac; done <"$1";;
+            *) return 1;;
+        esac
+    }
+    bbr_set bbr fq
+    [[ $(cat "$work/congestion") == bbr && $(cat "$work/qdisc") == fq && -f $BBR_FILE ]] || bad 'BBR enable'
+    bbr_id=$(jq -r .id "$STATE/latest.json"); restore_snapshot "$bbr_id"
+    [[ $(cat "$work/congestion") == cubic && $(cat "$work/qdisc") == fq_codel && ! -f $BBR_FILE ]] || bad 'BBR restore'
+    ok 'BBR enable and rollback with no preexisting sysctl file'
+    mkdir -p "$(dirname "$BBR_FILE")"; printf '# original\n' >"$BBR_FILE"
+    bbr_set bbr fq; bbr_id=$(jq -r .id "$STATE/latest.json"); restore_snapshot "$bbr_id"
+    grep -q '# original' "$BBR_FILE" || bad 'old sysctl file lost'
+    ok 'BBR restores previous file and runtime values'
+fi

@@ -467,6 +467,7 @@ share() {
     local domain ports entry username password port proxy link credentials
     ask '显示包含代理密码的分享信息？' || return 0
     adapt_json
+    [[ $(jq '[..|objects|select(.handler? == "forward_proxy")]|length' "$ADAPTED") == 1 ]] || die '分享导出仅支持单个 forward_proxy 站点；多独立站点请分别手工导出'
     domain=$(jq -r '[..|objects|.host? // empty|select(type=="array")|.[]][0] // empty' "$ADAPTED")
     [[ -n $domain ]] || prompt domain '未自动识别域名，请输入证书域名'
     valid_domain "$domain" || die '域名无效'
@@ -508,7 +509,7 @@ restore_bbr_files() {
     local backup=$1
     regular "$backup/bbr.json"
     [[ $(jq -r .path "$backup/bbr.json") == "$BBR_FILE" ]] || die 'BBR 恢复路径不匹配'
-    if [[ -f $backup/bbr.conf ]]; then copy_atomic "$backup/bbr.conf" "$BBR_FILE"; else [[ ! -e $BBR_FILE ]] || { regular "$BBR_FILE"; rm -f "$BBR_FILE"; }; fi
+    if [[ -f $backup/bbr.conf ]]; then copy_atomic "$backup/bbr.conf" "$BBR_FILE"; cp --attributes-only --preserve=all "$backup/bbr.conf" "$BBR_FILE"; else [[ ! -e $BBR_FILE ]] || { regular "$BBR_FILE"; rm -f "$BBR_FILE"; }; fi
     sysctl -w "net.core.default_qdisc=$(jq -r .qdisc "$backup/bbr.json")" "net.ipv4.tcp_congestion_control=$(jq -r .congestion "$backup/bbr.json")"
 }
 bbr_set() {
