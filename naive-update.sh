@@ -40,7 +40,7 @@ state_init() {
     root
     [[ $SERVICE =~ ^[a-zA-Z0-9_@.-]+\.service$ && $SERVICE != -* ]] || die '服务名称无效'
     [[ $STATE == /* && $(readlink -m -- "$STATE") == "$STATE" && ! -L $STATE ]] || die '状态目录必须为无符号链接的绝对路径'
-    [[ -d $STATE ]] || mkdir -p -- "$STATE"
+    if [[ ! -d $STATE ]]; then mkdir -p -- "$STATE"; chmod 700 "$STATE"; fi
     [[ $(stat -c %u "$STATE") == 0 && $(stat -c %a "$STATE") == 700 ]] || die '状态目录必须 root:root、0700'
     exec 9>"$STATE/lock"; flock -n 9 || die '另一个管理操作正在运行'
     [[ ! -e $STATE/pending.json || ${1:-} == recover ]] || die '存在未完成事务，请先执行 recover'
@@ -73,7 +73,7 @@ copy_atomic() {
 }
 snapshot() {
     local kind=$1 id backup was_active=false enabled=false f had_bin=false had_config=false had_unit=false
-    id="$(now)-$(openssl rand -hex 4)"; backup=$STATE/backups/$id; mkdir -p "$backup"
+    id="$(now)-$(openssl rand -hex 4)"; backup=$STATE/backups/$id; mkdir -p "$backup"; chmod 700 "$backup"
     if [[ $kind != bbr ]]; then
         active && was_active=true
         systemctl is-enabled --quiet "$SERVICE" 2>/dev/null && enabled=true
