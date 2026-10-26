@@ -393,8 +393,10 @@ install_tool() {
 }
 install_na_alias() {
     install_tool; ask '接管 /usr/bin/na？旧脚本会备份，服务配置不变' || return 0
+    if [[ -L /usr/bin/na && $(readlink -f /usr/bin/na) == "$TOOL" ]]; then say 'na 已指向本工具'; return; fi
     if [[ -e /usr/bin/na ]]; then regular /usr/bin/na; cp --preserve=all /usr/bin/na "$STATE/old-na-$(now).sh"; fi
-    copy_atomic "$SELF" /usr/bin/na; chmod 755 /usr/bin/na
+    local link; link=/usr/bin/.naive-alias-$(openssl rand -hex 4)
+    ln -s "$TOOL" "$link"; mv -fT "$link" /usr/bin/na
 }
 deploy() {
     local dir=$BUILD_DIR id candidate domain port username password certmode email='' cert='' key='' camouflage choice certdir='' group stage

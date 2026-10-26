@@ -54,7 +54,6 @@ NAIVE_CONFIG=$work/etc/Caddyfile bash -c 'source "$1"; CONFIG=$NAIVE_CONFIG; exa
 [[ -f $work/etc/examples/Caddyfile.standard && ! -f $work/etc/Caddyfile ]] || bad 'examples modified active config'; ok 'optional examples not activated'
 ! grep -Eq 'exec python|python3 ' "$SCRIPT" || bad 'runtime Python dependency'; ok 'standalone Shell runtime'
 bash "$SCRIPT" --help >/dev/null; [[ $(bash "$SCRIPT" --version) == 2.0.0 ]] || bad 'version'; ok 'standalone CLI smoke'
-say "Passed $count shell checks"
 if [[ $(uname -s) == Linux ]]; then
     # Model sysctl entirely in temporary files: never change the runner kernel.
     STATE=$work/state; BBR_FILE=$work/sysctl/90-test.conf; YES=1
@@ -79,3 +78,4 @@ if [[ $(uname -s) == Linux ]]; then
     grep -q '# original' "$BBR_FILE" || bad 'old sysctl file lost'
     ok 'BBR restores previous file and runtime values'
 fi
+say "Passed $count shell checks"
