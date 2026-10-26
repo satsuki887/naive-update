@@ -465,13 +465,29 @@ EOF
     say '请按监听配置放行系统防火墙/云安全组的 TCP；需要 HTTP/3 时另放行对应 UDP。'
 }
 adapt_json() { tmpdir; ADAPTED=$REPLY/config.json; "$BIN" adapt --config "$CONFIG" --adapter caddyfile >"$ADAPTED"; }
+discover_domain() {
+    local json=$1 cert candidate
+    REPLY=${DOMAIN:-}
+    [[ -z $REPLY ]] || return 0
+    REPLY=$(jq -r '[([..|objects|.host? // empty|select(type=="array")|.[]][]),(.apps.tls.automation.policies[]?.subjects[]?),(.apps.http.servers[]?.tls_connection_policies[]?.match.sni[]?)]|map(select(type=="string" and (contains("*")|not)))|.[0] // empty' "$json")
+    [[ -z $REPLY ]] || return 0
+    # Caddy can optimize away host matchers for ':443, domain' catch-all sites.
+    # In external-certificate mode the DNS identity then lives in the certificate.
+    while IFS= read -r cert; do
+        [[ -f $cert ]] || continue
+        candidate=$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[A-Za-z0-9.-]+' | cut -d: -f2 | head -n1) || candidate=''
+        if [[ -n $candidate ]]; then REPLY=$candidate; return 0; fi
+    done < <(jq -r '.apps.tls.certificates.load_files[]?.certificate' "$json")
+    # A restricted fallback for the common, single-line catch-all Caddyfile header.
+    REPLY=$(sed -nE 's/^[[:space:]]*:[0-9]+,[[:space:]]*([A-Za-z0-9.-]+)(:[0-9]+)?[[:space:]]*\{[[:space:]]*$/\1/p' "$CONFIG" | head -n1)
+}
 share() {
     local domain ports entry username password port proxy link credentials
     ask '显示包含代理密码的分享信息？' || return 0
     adapt_json
     [[ $(jq '[..|objects|select(.handler? == "forward_proxy")]|length' "$ADAPTED") == 1 ]] || die '分享导出仅支持单个 forward_proxy 站点；多独立站点请分别手工导出'
-    domain=$(jq -r '[..|objects|.host? // empty|select(type=="array")|.[]][0] // empty' "$ADAPTED")
-    [[ -n $domain ]] || prompt domain '未自动识别域名，请输入证书域名'
+    discover_domain "$ADAPTED"; domain=$REPLY
+    if [[ -z $domain ]]; then [[ -t 0 ]] || die '未识别域名；请通过 --domain 指定证书域名'; prompt domain '未识别域名，请输入证书域名'; fi
     valid_domain "$domain" || die '域名无效'
     ports=$(jq -r '[.apps.http.servers[]?.listen[]?|capture(":(?<port>[0-9]+)$").port]|unique|.[]' "$ADAPTED")
     [[ -n $ports ]] || die '无法识别监听端口'

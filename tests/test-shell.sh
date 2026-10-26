@@ -54,6 +54,9 @@ NAIVE_CONFIG=$work/etc/Caddyfile bash -c 'source "$1"; CONFIG=$NAIVE_CONFIG; exa
 [[ -f $work/etc/examples/Caddyfile.standard && ! -f $work/etc/Caddyfile ]] || bad 'examples modified active config'; ok 'optional examples not activated'
 ! grep -Eq 'exec python|python3 ' "$SCRIPT" || bad 'runtime Python dependency'; ok 'standalone Shell runtime'
 bash "$SCRIPT" --help >/dev/null; [[ $(bash "$SCRIPT" --version) == 2.0.0 ]] || bad 'version'; ok 'standalone CLI smoke'
+printf '{"apps":{"tls":{"automation":{"policies":[{"subjects":["proxy.example.test"]}]}}}}' >"$work/catchall.json"
+discover_domain "$work/catchall.json"; [[ $REPLY == proxy.example.test ]] || bad 'catch-all domain lost'; ok 'catch-all domain recovered from ACME policy'
+DOMAIN=explicit.example.test; discover_domain "$work/catchall.json"; [[ $REPLY == explicit.example.test ]] || bad 'explicit domain ignored'; unset DOMAIN; ok 'explicit sharing domain takes precedence'
 if [[ $(uname -s) == Linux ]]; then
     # Model sysctl entirely in temporary files: never change the runner kernel.
     STATE=$work/state; BBR_FILE=$work/sysctl/90-test.conf; YES=1
