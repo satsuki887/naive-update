@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+build/
+build-*/
+.naive-build-*/
+.naive-download-*/
+dist/
+state/
+*.log
+*.pem
+*.key
+Caddyfile
+.env

@@ -1,0 +1,104 @@
+name: Build official Naive server
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Official forwardproxy tag; leave blank for latest'
+        type: string
+        default: ''
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: official-server-release
+  cancel-in-progress: false
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    outputs:
+      needed: ${{ steps.discover.outputs.needed }}
+      upstream: ${{ steps.discover.outputs.upstream }}
+      tag: ${{ steps.discover.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - id: discover
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RELEASE: ${{ inputs.release }}
+        run: python3 ci/prepare_release.py
+  build:
+    needs: discover
+    if: needs.discover.outputs.needed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache: false
+      - run: python3 -m unittest discover -s tests -v
+      - name: Build pinned official source with its CI patches
+        env:
+          RELEASE: ${{ needs.discover.outputs.upstream }}
+        run: python3 naive_update.py build --release "$RELEASE" --output build --jobs 2
+      - name: Validate with a harmless isolated configuration
+        run: |
+          printf '{\n auto_https off\n}\nhttp://127.0.0.1:18080 {\n route {\n forward_proxy {\n basic_auth ci-user ci-test-only-password\n hide_ip\n hide_via\n probe_resistance\n }\n respond "ci"\n }\n}\n' > /tmp/naive-ci-Caddyfile
+          build/caddy validate --config /tmp/naive-ci-Caddyfile --adapter caddyfile
+      - name: Package
+        run: python3 ci/package.py build dist
+      - name: Isolated real systemd install and rollback test
+        run: sudo --preserve-env=GITHUB_ACTIONS python3 tests/integration_service.py build/caddy
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: [discover, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: server-*
+          path: dist
+          merge-multiple: true
+      - name: Verify and publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.discover.outputs.tag }}
+          UPSTREAM: ${{ needs.discover.outputs.upstream }}
+        run: |
+          set -euo pipefail
+          cat dist/*.sha256 > dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
+          printf 'Built from official klzgrad/forwardproxy release **%s** using its Caddy version and patches.\n\nPackages: Linux amd64 and arm64, CGO disabled. Each archive contains caddy, build.json, build-info.txt, SHA256SUMS and LICENSES.txt.\n\nSource: https://github.com/klzgrad/forwardproxy/releases/tag/%s\n\nTool/recipe commit: %s\n\nVerify the archive against SHA256SUMS before installation. Back up and validate your configuration; restart is required.\n' "$UPSTREAM" "$UPSTREAM" "$GITHUB_SHA" > notes.md
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --draft --title "Naive server $UPSTREAM" --notes-file notes.md
+          fi
+          gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber
+          gh release edit "$TAG" --draft=false --latest --notes-file notes.md

@@ -1,0 +1,22 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -v
+      - run: bash -n naive-update.sh && shellcheck naive-update.sh
+      - name: CLI smoke test
+        run: |
+          ./naive-update.sh --help
+          ./naive-update.sh --version
+          python3 -m py_compile naive_update.py ci/*.py
