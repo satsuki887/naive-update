@@ -1099,7 +1099,7 @@ hysteria_install() {
     # JSON strings are also valid YAML scalars, including passwords with punctuation.
     {
         printf 'listen: ":%s"\ntls:\n  cert: %s\n  key: %s\nauth:\n  type: password\n  password: %s\n' "$port" "$(printf %s "$CERT_ROOT/current/cert.crt" | quote)" "$(printf %s "$CERT_ROOT/current/private.key" | quote)" "$(printf %s "$password" | quote)"
-        printf '# 不设置 bandwidth，服务端使用 BBR\ningoreClientBandwidth: false\n# 保留 UDP，空闲超时 60s\ndisableUDP: false\nudpIdleTimeout: 60s\n'
+        printf '# 不设置 bandwidth，服务端使用 BBR\nignoreClientBandwidth: false\n# 保留 UDP，空闲超时 60s\ndisableUDP: false\nudpIdleTimeout: 60s\n'
         if [[ -n $masquerade ]]; then
             printf 'masquerade:\n  type: proxy\n  proxy:\n    url: %s\n    rewriteHost: true\n' "$(printf %s "$masquerade" | quote)"
         fi

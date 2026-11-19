@@ -18,12 +18,16 @@ trap cleanup EXIT
 mkdir -p "$BASE/bin" "$BASE/etc"; chmod 755 "$BASE/bin" "$BASE/etc"
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=proxy.example.test -addext subjectAltName=DNS:proxy.example.test -keyout "$BASE/key" -out "$BASE/cert" >/dev/null 2>&1
 printf 'proxy.example.test\n18444\n%s\n%s\nci-password\nhttps://example.org\n' "$BASE/cert" "$BASE/key" | bash "$SCRIPT" hysteria install --yes
-[[ $(systemctl show "$HYSTERIA_SERVICE" -p User --value) == "$HYSTERIA_USER" ]]
-systemctl is-active --quiet "$HYSTERIA_SERVICE"
-grep -q 'ignoreClientBandwidth: false' "$HYSTERIA_CONFIG"
-grep -q 'udpIdleTimeout: 60s' "$HYSTERIA_CONFIG"
-grep -q 'https://example.org' "$HYSTERIA_CONFIG"
-grep -q 'rewriteHost: true' "$HYSTERIA_CONFIG"
+service_user=$(systemctl show "$HYSTERIA_SERVICE" -p User --value)
+[[ $service_user == "$HYSTERIA_USER" ]] || { echo "unexpected service user: [$service_user]" >&2; exit 1; }
+systemctl is-active --quiet "$HYSTERIA_SERVICE" || {
+    systemctl status "$HYSTERIA_SERVICE" --no-pager || :
+    journalctl -u "$HYSTERIA_SERVICE" -n 50 --no-pager || :
+    exit 1
+}
+for expected in 'ignoreClientBandwidth: false' 'udpIdleTimeout: 60s' 'https://example.org' 'rewriteHost: true'; do
+    grep -q "$expected" "$HYSTERIA_CONFIG" || { echo "missing from config: $expected" >&2; cat "$HYSTERIA_CONFIG"; exit 1; }
+done
 original=$(sha256sum "$HYSTERIA_CONFIG")
 bash "$SCRIPT" hysteria update --yes
 [[ $(sha256sum "$HYSTERIA_CONFIG") == "$original" ]]
