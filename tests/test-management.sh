@@ -91,6 +91,7 @@ echo 'ok - empty scheduled/manual release uses authenticated gh discovery and sk
 CONFIG=/etc/caddy/Caddyfile SERVICE=caddy.service CERT_ROOT=/etc/caddy/managed-certs
 out=$(acme_example)
 grep -q 'Namesilo_Key' <<<"$out"
+grep -q -- '--set-default-ca --server letsencrypt' <<<"$out"
 grep -q -- '--dnssleep 300' <<<"$out"
 grep -q -- '--install-cert' <<<"$out"
 grep -q 'caddy reload --config /etc/caddy/Caddyfile' <<<"$out"

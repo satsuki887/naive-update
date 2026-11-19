@@ -767,6 +767,7 @@ acme_example() {
     say ''
     say 'ACME 申请示例（替换域名和 API Key 后执行；账户邮箱在安装时设置）：'
     printf '  export Namesilo_Key=%s\n' "'你的 NameSilo API Key'"
+    printf '  %s --set-default-ca --server letsencrypt\n' "$client"
     printf '  %s --issue --dns dns_namesilo --dnssleep 300 -d %s -d %s\n' "$client" "$domain" "'*.$domain'"
     say ''
     say '安装证书并重载服务示例：'
@@ -775,7 +776,7 @@ acme_example() {
     printf '    --fullchain-file %s \\\n' "$CERT_ROOT/current/cert.crt"
     printf '    --reloadcmd %s\n' "'$reload'"
     say ''
-    say "默认 CA 为 ZeroSSL；如需 Let's Encrypt，在 --issue 命令加 --server letsencrypt。"
+    say "上面把默认 CA 切换为 Let's Encrypt；如需继续使用 ZeroSSL，跳过 --set-default-ca 这一行。"
     say 'install-cert 会直接覆盖固定证书路径并重载；首次部署需在安装向导选择“已有证书”才会生成该目录。'
 }
 acme_install() {

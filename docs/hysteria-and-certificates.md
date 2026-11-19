@@ -31,10 +31,11 @@ Hysteria 备份独立存放在 `/var/lib/naive-update/hysteria`；菜单 12 属�
 
 ```bash
 export Namesilo_Key='你的 NameSilo API Key'
+/root/.acme.sh/acme.sh --set-default-ca --server letsencrypt
 /root/.acme.sh/acme.sh --issue --dns dns_namesilo --dnssleep 300 -d example.com -d '*.example.com'
 ```
 
-`--dnssleep 300` 让 acme.sh 在写入 TXT 记录后等待 5 分钟，减少 DNS 传播导致的验证失败。
+`--dnssleep 300` 让 acme.sh 在写入 TXT 记录后等待 5 分钟，减少 DNS 传播导致的验证失败。如果传播不稳定，去掉 `--dnssleep`，acme.sh 会先等 20 秒，再主动轮询公共 DNS，最多 20 分钟。
 
 用 `--install-cert` 直接写入 Caddy 使用的固定证书路径，并在成功后 reload。Naive 示例：
 
@@ -49,7 +50,7 @@ Caddy 会根据 `Caddyfile` 文件名自动选择 caddyfile 适配器，不需�
 
 Hysteria 使用 `/etc/hysteria/managed-certs/current/` 和 `systemctl restart hysteria-server.service`。`naive-update cert acme-example` 或 `hysteria cert-hook` 会按当前服务打印对应版本。
 
-默认 CA 为 ZeroSSL；如需 Let's Encrypt，在 `--issue` 命令加 `--server letsencrypt`。DNS-01 不依赖 80/443 端口，但需要 NameSilo API Key 的 DNS 编辑权限。首次部署必须使用“已有证书”模式，才会生成 `managed-certs/current`；否则 install-cert 的写入路径不存在。
+示例先把默认 CA 切换为 Let's Encrypt；ZeroSSL 在验证阶段可能返回较长的 Retry-After。DNS-01 不依赖 80/443 端口，但需要 NameSilo API Key 的 DNS 编辑权限。首次部署必须使用“已有证书”模式，才会生成 `managed-certs/current`；否则 install-cert 的写入路径不存在。
 
 ## 固定证书路径与续期
 
