@@ -5,7 +5,7 @@
 # shellcheck disable=SC2016,SC2030,SC2031
 set -Eeuo pipefail
 umask 077
-VERSION=2.3.0
+VERSION=2.3.1
 REPO=satsuki887/naive-update
 UPSTREAM=klzgrad/forwardproxy
 BIN=${NAIVE_BIN:-/usr/bin/caddy}
@@ -130,8 +130,8 @@ ui_naive_summary() {
     else REPLY='未安装'; fi
 }
 ui_client_summary() {
-    local installed='' latest=${UI_CLIENT#v} bin sig file re='1[0-9]{2}\.[0-9]+\.[0-9]+\.[0-9]+-[0-9]+'
-    for bin in "$(command -v naive 2>/dev/null)" /usr/local/bin/naive /usr/bin/naive /usr/local/naive/naive /opt/naive/naive /root/naive/naive; do
+    local installed='' latest=${UI_CLIENT#v} bin sig file svc info re='1[0-9]{2}\.[0-9]+\.[0-9]+\.[0-9]+-[0-9]+'
+    for bin in "$(command -v naive 2>/dev/null)" "$(command -v naiveproxy 2>/dev/null)" /usr/local/bin/naive /usr/local/bin/naiveproxy /usr/bin/naive /usr/bin/naiveproxy /usr/local/naive/naive /opt/naive/naive /root/naive/naive; do
         [[ -n $bin && -x $bin ]] || continue
         sig=$(stat -c '%i:%s:%Y' "$bin" 2>/dev/null) || sig=$bin
         sig=$bin:$sig
@@ -140,8 +140,19 @@ ui_client_summary() {
         [[ -n $installed ]] || installed=$(timeout 2 "$bin" -version 2>&1 | grep -oE "$re" | head -n1) || installed=''
         if [[ -n $installed ]]; then UI_CLIENT_SIG=$sig; UI_CLIENT_INSTALLED=$installed; break; fi
     done
+    if [[ -z $installed ]] && command -v systemctl >/dev/null; then
+        for svc in naiveproxy.service naive.service naive-server.service; do
+            info=$(timeout 2 systemctl show "$svc" -p ExecStart --value 2>/dev/null) || continue
+            bin=$(grep -oE 'path=[^ ;]+' <<<"$info" | head -n1) || bin=''
+            bin=${bin#path=}
+            [[ -n $bin && -x $bin ]] || continue
+            installed=$(timeout 2 "$bin" --version 2>&1 | grep -oE "$re" | head -n1) || installed=''
+            [[ -n $installed ]] || installed=$(timeout 2 "$bin" -version 2>&1 | grep -oE "$re" | head -n1) || installed=''
+            [[ -n $installed ]] && break
+        done
+    fi
     if [[ -z $installed ]]; then
-        for file in /usr/local/etc/naive/version /etc/naive/version /usr/local/naive/version /root/naive/version /usr/local/bin/naive.version; do
+        for file in /usr/local/etc/naive/version /usr/local/etc/naive/naive.version /etc/naive/version /etc/naive/naive.version /usr/local/naive/version /root/naive/version /usr/local/bin/naive.version; do
             [[ -f $file ]] || continue
             installed=$(grep -oE "$re" "$file" 2>/dev/null | head -n1) || installed=''
             [[ -n $installed ]] && break
@@ -153,7 +164,7 @@ ui_client_summary() {
         elif [[ $latest == "$installed" ]]; then REPLY="v$installed ${C_GOOD}✓${C_RESET}"
         else REPLY="v$installed"; fi
     elif [[ -n $latest ]]; then
-        REPLY="${C_MUTED}参考 v$latest${C_RESET}"
+        REPLY="${C_MUTED}官方最新 v$latest（未检测到本机客户端）${C_RESET}"
     else
         REPLY='未检测到'
     fi
@@ -1330,21 +1341,21 @@ menu_draw() {
     ui_versions 0
     ui_local_version
     ui_home_heading
-    ui_option 1 '安装 / 部署'
-    ui_option 2 '卸载服务端'
-    ui_option 3 'Caddyfile 管理'
-    ui_option 4 '服务启停'
+    ui_option 1 '安装 / 部署 Naive 服务端'
+    ui_option 2 '卸载 Naive 服务端'
+    ui_option 3 '管理 Caddyfile 配置'
+    ui_option 4 '启停 / 重启 Naive 服务'
     ui_line
-    ui_option 5 '版本 / 更新'
-    ui_option 6 '分享 / 客户端'
-    ui_option 7 '运行日志'
-    ui_option 8 '证书 / ACME'
-    ui_option 9 '网络优化（BBR/UDP）'
-    ui_option 10 'WARP / 出口'
+    ui_option 5 '检查更新 / 升级服务端'
+    ui_option 6 '生成分享链接 / 客户端配置'
+    ui_option 7 '查看服务运行日志'
+    ui_option 8 '管理证书 / ACME 续期'
+    ui_option 9 '网络优化（BBR / FQ / UDP）'
+    ui_option 10 '安装 WARP / 检测出口'
     ui_line
-    ui_option 11 '回滚 / 恢复'
-    ui_option 12 '工具 / 诊断'
-    ui_option 13 'Hysteria 2 管理'
+    ui_option 11 '备份 / 回滚 / 中断恢复'
+    ui_option 12 '快捷命令 / 工具更新 / 诊断'
+    ui_option 13 '管理 Hysteria 2 服务'
     ui_line
     ui_naive_summary; server=$REPLY
     ui_client_summary
