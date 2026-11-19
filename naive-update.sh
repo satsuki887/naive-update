@@ -1047,7 +1047,7 @@ hysteria_fetch() {
     say "目标：$actual；SHA256：$expected"; REPLY=$work/hysteria
 }
 hysteria_install() {
-    local staged domain port password cert key group id
+    local staged domain port password cert='' key='' group id
     [[ ! -e $BIN && ! -e $CONFIG && ! -e $UNIT ]] || die '检测到现有 Hysteria，请选择更新或编辑配置'
     [[ $(systemctl show "$SERVICE" -p LoadState --value 2>/dev/null || :) != loaded ]] || die '已存在同名服务'
     prompt_until domain '证书域名' '' valid_domain; DOMAIN=$domain
