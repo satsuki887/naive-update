@@ -22,6 +22,7 @@ download_url() {
         *) return 1;;
     esac
 }
+# shellcheck disable=SC2218 # the real function is provided by the sourced script
 hysteria_fetch
 [[ $(hysteria_version "$REPLY") == v2.14.0 ]]
 [[ $(wc -l <"$TEST_WORK/urls") == 2 ]]
