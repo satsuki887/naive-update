@@ -14,6 +14,8 @@ EOF
 chmod +x "$TEST_WORK/server"
 uname() { printf 'x86_64\n'; }
 api() { printf '{"tag_name":"app/v2.14.0"}\n'; }
+hysteria_latest
+[[ $REPLY == app/v2.14.0 ]]
 download_url() {
     printf '%s\n' "$1" >>"$TEST_WORK/urls"
     case $1 in
@@ -45,6 +47,7 @@ systemctl() {
         *) return 0;;
     esac
 }
+api() { printf '{"tag_name":"app/v2.15.0"}\n'; }
 hysteria_fetch() { REPLY=$TEST_WORK/candidate; }
 printf 'new binary\n' >"$TEST_WORK/candidate"
 hysteria_update
@@ -54,6 +57,11 @@ restore_snapshot "$id"
 cmp "$BIN" "$TEST_WORK/server"
 [[ $(cat "$CONFIG") == 'original config' ]]
 echo 'ok - Hysteria update preserves stopped state and config; binary rollback restores bytes'
+api() { printf '{"tag_name":"app/v2.14.0"}\n'; }
+hysteria_fetch() { printf called >"$TEST_WORK/fetched"; return 1; }
+hysteria_update >/dev/null
+[[ ! -e $TEST_WORK/fetched ]]
+echo 'ok - Hysteria update checks the target before downloading'
 UDP_FILE=$TEST_WORK/sysctl/udp.conf
 # Native jq rewrites MSYS paths in arguments; store a native path so restore compares equal.
 if command -v cygpath >/dev/null 2>&1; then UDP_FILE=$(cygpath -m "$UDP_FILE"); fi

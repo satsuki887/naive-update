@@ -22,6 +22,7 @@ cat >"$UI_CACHE/tags.json" <<'EOF'
 EOF
 printf '{"tag_name":"v154.0.8037.49-5"}\n' >"$UI_CACHE/client.json"
 printf '{"tag_name":"v2.11.7"}\n' >"$UI_CACHE/caddy.json"
+printf '{"tag_name":"app/v2.15.0"}\n' >"$UI_CACHE/hysteria.json"
 cat >"$work/config.json" <<'EOF'
 {"apps":{"http":{"servers":{"srv0":{"listen":[":443"],"protocols":["h1","h2"],"routes":[{"match":[{"host":["proxy.example.test"]}]}]}}},"tls":{"automation":{"policies":[{"subjects":["proxy.example.test"]}]}}}}
 EOF
@@ -35,7 +36,16 @@ esac
 EOF
 cat >"$work/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
+if [[ $1 == is-active ]]; then printf 'active\n'; exit 0; fi
 printf 'ActiveState=active\nMainPID=4242\nUnitFileState=enabled\nExecMainStartTimestampMonotonic=0\nMemoryCurrent=10485760\n'
+EOF
+cat >"$work/bin/hysteria" <<'EOF'
+#!/usr/bin/env bash
+[[ $1 == version ]] && printf 'Version:\tv2.14.0\n'
+EOF
+cat >"$work/bin/naive" <<'EOF'
+#!/usr/bin/env bash
+[[ $1 == --version ]] && printf 'Naiveproxy v154.0.8037.49-4\n'
 EOF
 cat >"$work/bin/sysctl" <<'EOF'
 #!/usr/bin/env bash
@@ -46,7 +56,7 @@ cat >"$work/bin/warp-cli" <<'EOF'
 printf 'Status update: %s\n' "${UI_FAKE_WARP_STATUS:-Disconnected}"
 EOF
 chmod +x "$work/bin/"*
-export UI_FAKE_CONFIG=$work/config.json PATH="$work/bin:$PATH"
+export UI_FAKE_CONFIG=$work/config.json PATH="$work/bin:$PATH" HYSTERIA_BIN=$work/bin/hysteria
 ui_load_versions; ui_local_version
 [[ $UI_INSTALLED_TAG == v2.11.7-naive && $UI_COMMIT == c096d6a00cb2 ]] || fail 'legacy version identification'
 ok 'legacy plugin commit resolves the actual server release'
@@ -62,6 +72,15 @@ export UI_FAKE_WARP_STATUS=Connected
 ui_system_rows >"$work/status"
 grep -q 'WARP 已连接' "$work/status" || fail 'WARP connection state'
 ok 'connected and disconnected WARP are distinguished'
+UI_HYSTERIA=v2.15.0
+ui_hysteria_summary; [[ $REPLY == *'可更新 v2.15.0'* ]] || fail 'Hysteria update detection'
+UI_HYSTERIA=v2.14.0
+ui_hysteria_summary; [[ $REPLY == *最新* ]] || fail 'Hysteria latest detection'
+UI_CLIENT=v154.0.8037.49-5
+ui_client_summary; [[ $REPLY == *'已安装 v154.0.8037.49-4'* && $REPLY == *有更新* ]] || fail 'client kernel update detection'
+UI_CLIENT=v154.0.8037.49-4
+ui_client_summary; [[ $REPLY == *最新* ]] || fail 'client kernel latest detection'
+ok 'homepage detects Hysteria and client kernel updates'
 jq -n --arg sha "$(digest "$BIN")" '{release:"v2.11.7-naive2",sha256:$sha,forwardproxy:{commit:"e747854e7874000000000000000000000000000000"}}' >"$STATE/current-build.json"
 UI_LOCAL_SIG=''; ui_local_version
 [[ $UI_INSTALLED_TAG == v2.11.7-naive2 ]] || fail 'receipt-based version'
@@ -74,20 +93,20 @@ UI_LOCAL_SIG=''; ui_local_version
 ok 'mismatched provenance is rejected instead of displaying a false version'
 ui_fetch() { printf '%s\n' "$2" >>"$work/fetch-count"; printf failed >"$UI_CACHE/$2.failed"; return 1; }
 ui_versions 1 >/dev/null; ui_versions 0 >/dev/null
-[[ $(wc -l <"$work/fetch-count") == 5 && $UI_OFFICIAL == v2.11.7-naive2 ]] || fail 'cache retry storm or stale cache lost'
+[[ $(wc -l <"$work/fetch-count") == 6 && $UI_OFFICIAL == v2.11.7-naive2 ]] || fail 'cache retry storm or stale cache lost'
 ok 'failed refresh keeps cached versions and respects the retry interval'
 export NAIVE_OFFLINE=1
-ui_versions 1 >/dev/null; [[ $(wc -l <"$work/fetch-count") == 5 ]] || fail 'offline mode accessed network'
+ui_versions 1 >/dev/null; [[ $(wc -l <"$work/fetch-count") == 6 ]] || fail 'offline mode accessed network'
 ok 'offline status performs no remote queries'
 (
     submenu_draw() { printf '%s\n' "$1" >>"$work/menus"; }
     run_menu_command() { printf '%s\n' "$*" >"$work/unexpected-action"; }
-    for kind in config service cert warp bbr backup shortcut doctor; do submenu "$kind" <<<0; done
+    for kind in config service cert warp bbr backup shortcut; do submenu "$kind" <<<0; done
     upgrade_menu <<<0 >/dev/null
 )
-[[ $(wc -l <"$work/menus") == 8 && ! -f $work/unexpected-action ]] || fail 'submenu return triggered an action'
+[[ $(wc -l <"$work/menus") == 7 && ! -f $work/unexpected-action ]] || fail 'submenu return triggered an action'
 ok 'every submenu and the upgrade screen return with 0 without side effects'
-for kind in config service cert warp bbr backup shortcut doctor; do
+for kind in config service cert warp bbr backup shortcut; do
     submenu_draw "$kind" >"$work/submenu"
     grep -q '返回主菜单' "$work/submenu" || fail "missing back entry: $kind"
 done

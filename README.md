@@ -2,7 +2,7 @@
 
 独立的交互式 **Bash 运维工具**：安装与更新 Naive / Hysteria 2、管理服务和外部证书、BBR/FQ、UDP 缓冲区及 WARP。运行时只需一个 `naive-update.sh`，无需 Python 或其他配套源码文件。
 
-新增入口：**15 Hysteria 2 管理**；UDP 缓冲区优化并入 **11 网络优化**。菜单 9 可直接安装 acme.sh，并给出 NameSilo DNS-01 申请和 install-cert 部署示例；新安装默认使用已有证书，并提供固定证书目录及续期部署钩子。详见 [Hysteria、证书与优化指南](docs/hysteria-and-certificates.md) 和 [上线前审视 / CI 故障证据](docs/readiness-review.md)。
+新增入口：**13 Hysteria 2 管理**；UDP 缓冲区优化并入 **9 网络优化**。菜单 8 可直接安装 acme.sh，并给出 NameSilo DNS-01 申请和 install-cert 部署示例；新安装默认使用已有证书，并提供固定证书目录及续期部署钩子。详见 [Hysteria、证书与优化指南](docs/hysteria-and-certificates.md) 和 [上线前审视 / CI 故障证据](docs/readiness-review.md)。
 
 本工具由第三方维护，服务端使用 Naive 官方 `klzgrad/forwardproxy` 源码及其 Caddy 版本和补丁。GitHub Actions 定时编译 Linux amd64 安装包。工具可从 `tool-v*` Release 校验后自动更新自身，也不使用原博主的脚本或二进制。
 
@@ -21,7 +21,7 @@ sudo bash naive-update.sh
 sudo naive-update
 ```
 
-默认不会覆盖旧 `/usr/bin/na`。菜单 13 可以备份旧脚本后接管 `na` 命令。工具默认在菜单启动和按 `r` 刷新时检查 `tool-v*` Release，校验 SHA256 和版本后自动更新自身；`NAIVE_AUTO_UPDATE=0` 可关闭，`naive-update self-update` 可手动检查。
+默认不会覆盖旧 `/usr/bin/na`。菜单 12 可以备份旧脚本后接管 `na` 命令。工具默认在菜单启动和按 `r` 刷新时检查 `tool-v*` Release，校验 SHA256 和版本后自动更新自身；`NAIVE_AUTO_UPDATE=0` 可关闭，`naive-update self-update` 可手动检查。
 
 基础依赖是常见系统工具：Bash 4.3+、curl、jq、OpenSSL、GNU tar/coreutils、util-linux（flock/setpriv）、systemd。本地编译另需 Git、Go；二维码需要可选的 qrencode。菜单会检查依赖，可通过系统源安装。Go 不足时可安装 go.dev 提供、经过摘要校验的独立工具链，不覆盖系统 Go，也不写旧 Go 软件源。
 
@@ -33,17 +33,15 @@ sudo naive-update
 | 2 | 卸载二进制和本地 unit，保留配置、证书、用户数据及恢复备份 |
 | 3 | Caddyfile 手工编辑、验证、重载、写入可选示例 |
 | 4 | 启动、停止、重启、开机启动及状态 |
-| 5 | 官方服务端版本检查与工具信息 |
-| 6 | CI 包升级、本地源码编译升级、安装已有构建 |
-| 7 | 分享链接、Naive 客户端 JSON、可选终端二维码 |
-| 8 | systemd 日志 |
-| 9 | 证书状态、重载、导入、安装 acme.sh、NameSilo 申请与 install-cert 示例、已有证书的列表/续期 |
+| 5 | 版本检查、官方服务端对比、CI 包升级、本地源码编译、安装已有构建 |
+| 6 | 分享链接、Naive 客户端 JSON、可选终端二维码 |
+| 7 | systemd 日志 |
+| 8 | 证书状态、重载、导入、安装 acme.sh、NameSilo 申请与 install-cert 示例、已有证书的列表/续期 |
+| 9 | 网络优化：BBR + FQ、cubic + fq_codel、UDP 缓冲区上限（可回滚） |
 | 10 | Cloudflare 官方 WARP 安装、状态、本地代理连接/断开、出口可达性检测 |
-| 11 | 网络优化：BBR + FQ、cubic + fq_codel、UDP 缓冲区上限（可回滚） |
-| 12 | 备份与回滚、中断事务恢复 |
-| 13 | 安装快捷命令、工具自更新、可选接管 na |
-| 14 | 系统诊断、安装依赖 |
-| 15 | Hysteria 2 安装、更新、服务、配置、证书与恢复 |
+| 11 | 备份与回滚、中断事务恢复 |
+| 12 | 安装快捷命令、工具自更新、接管 na、系统诊断、安装依赖 |
+| 13 | Hysteria 2 安装、更新、服务、配置、证书与恢复 |
 
 ## 首页状态与返回导航（2.1）
 
@@ -51,9 +49,9 @@ sudo naive-update
 
 首页直接显示系统/内存/磁盘、服务运行状态/PID/运行时长/开机启动、域名与监听、协议、配置解析结果和证书有效期。BBR 是否启用、当前队列及 WARP 安装/连接状态也在首页显示，无需先进入附加功能菜单。
 
-主页用一行汇总当前 Naive、官方/本仓库构建差异及 Hysteria 状态；完整的 Caddy 版本、插件提交、包就绪情况和参考版本放在更新页及 `check` 命令中。旧部署优先从真实插件提交匹配官方标签；本工具安装记录只有与当前二进制 SHA256 一致时才采用。不能识别时显示未知，不伪造版本。
+主页分别显示服务端版本（当前/官方/本仓库）、Naive 客户端内核参考与检测结果、以及 Hysteria 状态；服务端更新看菜单 5，客户端内核不由本工具更新。完整的 Caddy 版本、插件提交、包就绪情况和参考版本放在更新页及 `check` 命令中。旧部署优先从真实插件提交匹配官方标签；本工具安装记录只有与当前二进制 SHA256 一致时才采用。不能识别时显示未知，不伪造版本。
 
-所有管理子菜单都支持 **0 返回主菜单**，操作后留在本子菜单；更新页也可返回。首页 `r` 或 `5` 刷新本机信息与在线版本。正常交互终端使用颜色和分区；管道、无色终端或 `NO_COLOR=1` 下保留可读纯文本。
+所有管理子菜单都支持 **0 返回主菜单**，操作后留在本子菜单；更新页也可返回。首页 `r` 刷新本机信息与在线版本。正常交互终端使用颜色和分区；管道、无色终端或 `NO_COLOR=1` 下保留可读纯文本。
 
 版本查询并行进行，每个请求约 5 秒超时，并缓存 15 分钟。失败时明确显示缓存状态，不让离线环境阻止本地管理。缓存位于当前用户的 `~/.cache/naive-update/ui`（或 XDG_CACHE_HOME）；不包含代理密码和私钥。
 
@@ -69,13 +67,13 @@ sudo env NO_COLOR=1 naive-update             # 无 ANSI 颜色
 
 菜单启动时和按 `r` 刷新时会检查本仓库最新的 `tool-v*` Release，结果缓存 6 小时。发现新版本后，下载 `naive-update.sh` 和 `SHA256SUMS-tool`，校验 SHA256、脚本内 `VERSION` 与标签一致、`bash -n` 通过后，原子替换 `$TOOL`（默认 `/usr/bin/naive-update`）并重新载入菜单。
 
-`NAIVE_AUTO_UPDATE=0` 可关闭自动更新；`naive-update self-update` 或菜单 13 → 3 可手动检查并更新。校验只能发现传输损坏和版本错配，不能防止仓库或 Release 本身被篡改；这与下载服务端二进制使用相同的信任边界。
+`NAIVE_AUTO_UPDATE=0` 可关闭自动更新；`naive-update self-update` 或菜单 12 → 3 可手动检查并更新。校验只能发现传输损坏和版本错配，不能防止仓库或 Release 本身被篡改；这与下载服务端二进制使用相同的信任边界。
 
 ## 新服务器安装
 
 准备域名，先把 A/AAAA 记录指向这台服务器。下载单文件，打开菜单 1。选择使用本仓库 CI 包或按官方源码本地编译，然后填写域名、监听端口、用户名和密码。
 
-证书默认使用你已配置的 ACME 所签发的完整链证书和无口令私钥；菜单 9 的 install-cert 示例直接写入固定目录并重载（Naive 用 `caddy reload`，Hysteria 用 `systemctl restart`）。也可选择 **Caddy 自带 ACME 自动申请与续期**。菜单 9 可从官方仓库安装 acme.sh，并显示 NameSilo DNS-01 申请与 install-cert 部署示例。自动 ACME 需要域名解析正确，公网 80 或 443 能完成挑战。外部证书会检查有效期、域名和公私钥匹配，复制到服务可读的专用目录。
+证书默认使用你已配置的 ACME 所签发的完整链证书和无口令私钥；菜单 8 的 install-cert 示例直接写入固定目录并重载（Naive 用 `caddy reload`，Hysteria 用 `systemctl restart`）。也可选择 **Caddy 自带 ACME 自动申请与续期**。菜单 8 可从官方仓库安装 acme.sh，并显示 NameSilo DNS-01 申请与 install-cert 部署示例。自动 ACME 需要域名解析正确，公网 80 或 443 能完成挑战。外部证书会检查有效期、域名和公私钥匹配，复制到服务可读的专用目录。
 
 全新安装使用独立 `naive-caddy` 用户和用户组，以 `CAP_NET_BIND_SERVICE` 绑定低端口，启用 systemd `NoNewPrivileges`、`PrivateTmp`、`ProtectHome` 等设置。数据放在 `/var/lib/naive-caddy`；管理状态及备份放在 root 私有的 `/var/lib/naive-update`。
 
@@ -172,7 +170,7 @@ sudo naive-update recover --yes           # 断电/SIGKILL 等留下 pending.jso
 
 - Caddy 自动 ACME 按自身策略续期，不定时删除证书强制重签。`cert status` 查看外部证书及服务数据，`cert reload` 验证后重载。
 - `cert import` 复制和验证证书，输出可加入 Caddyfile 的 tls 行；按你的习惯由你编辑文件。
-- 菜单 9 可从官方仓库安装 acme.sh，列出/续期已有证书，并显示 NameSilo DNS-01 申请与 install-cert 部署示例。外部证书由你配置 acme.sh 的 install-cert 目标路径与成功 reload 钩子。
+- 菜单 8 可从官方仓库安装 acme.sh，列出/续期已有证书，并显示 NameSilo DNS-01 申请与 install-cert 部署示例。外部证书由你配置 acme.sh 的 install-cert 目标路径与成功 reload 钩子。
 - WARP 使用 Cloudflare 官方签名仓库。仅在所装客户端支持 CLI proxy 模式时连接本地代理，并使用 MASQUE；不自动切换整机默认路由。Naive 需要使用该出口时，可手工添加示例中的 `upstream socks5://127.0.0.1:40000`。
 - WARP 发行版/架构支持和模式以 Cloudflare 当前客户端为准，受管理的 Zero Trust 客户端可能禁止本地模式修改。RPM 依赖可能需要 EPEL。
 - 出口检查显示 IP/地区、WARP 状态、ChatGPT/Netflix HTTP 可达性；HTTP 403 与反爬有关，不能简单当作地区封锁或播放授权结论。

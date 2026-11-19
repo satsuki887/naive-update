@@ -5,7 +5,7 @@
 # shellcheck disable=SC2016,SC2030,SC2031
 set -Eeuo pipefail
 umask 077
-VERSION=2.2.0
+VERSION=2.3.0
 REPO=satsuki887/naive-update
 UPSTREAM=klzgrad/forwardproxy
 BIN=${NAIVE_BIN:-/usr/bin/caddy}
@@ -23,7 +23,7 @@ TEMPS=()
 UI_CACHE='' UI_LOCAL_SIG='' UI_CONFIG_SIG='' UI_JSON=''
 UI_CADDY='' UI_COMMIT='' UI_INSTALLED_TAG='' UI_ORIGIN='' UI_RECEIPT_TAG=''
 UI_DOMAIN='' UI_PORTS='' UI_PROTOCOLS='' UI_CONFIG_STATUS=''
-UI_OFFICIAL='' UI_OWN='' UI_OFFICIAL_SHA='' UI_CLIENT='' UI_CADDY_LATEST='' UI_PACKAGE_READY=0
+UI_OFFICIAL='' UI_OWN='' UI_OFFICIAL_SHA='' UI_CLIENT='' UI_CADDY_LATEST='' UI_HYSTERIA='' UI_CLIENT_SIG='' UI_CLIENT_INSTALLED='' UI_PACKAGE_READY=0
 C_RESET='' C_TITLE='' C_ACCENT='' C_GOOD='' C_WARN='' C_BAD='' C_MUTED=''
 ui_init() {
     C_RESET='' C_TITLE='' C_ACCENT='' C_GOOD='' C_WARN='' C_BAD='' C_MUTED=''
@@ -33,10 +33,9 @@ ui_init() {
 }
 ui_line() { local width=${COLUMNS:-74} line; [[ $width =~ ^[0-9]+$ ]] || width=74; ((width<=78)) || width=78; ((width>=36)) || width=36; printf -v line '%*s' "$width" ''; line=${line// /─}; printf '%b%s%b\n' "$C_MUTED" "$line" "$C_RESET"; }
 ui_section() { printf '\n  %b%s%b\n' "$C_ACCENT" "$1" "$C_RESET"; }
-ui_group() { printf '  %b▸ %s%b\n' "$C_ACCENT" "$1" "$C_RESET"; }
 ui_width() { local text=$1 char i; local LC_ALL=C.UTF-8; UI_TEXT_WIDTH=0; for ((i=0;i<${#text};i++)); do char=${text:i:1}; if [[ $char == [\ -\~] ]]; then UI_TEXT_WIDTH=$((UI_TEXT_WIDTH+1)); else UI_TEXT_WIDTH=$((UI_TEXT_WIDTH+2)); fi; done; }
 ui_value() { local pad; ui_width "$1"; pad=$((12-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%s%b%*s%s\n' "$C_MUTED" "$1" "$C_RESET" "$pad" '' "$2"; }
-ui_kv() { local pad; ui_width "$1"; pad=$((8-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%s%b%*s%s\n' "$C_MUTED" "$1" "$C_RESET" "$pad" '' "$2"; }
+ui_kv() { local pad; ui_width "$1"; pad=$((8-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%s%b%*s%s\n' "$C_ACCENT" "$1" "$C_RESET" "$pad" '' "$2"; }
 ui_pair() { if [[ ${COLUMNS:-80} =~ ^[0-9]+$ ]] && ((${COLUMNS:-80}<72)); then ui_option "$1" "$2"; ui_option "$3" "$4"; return; fi; local pad; ui_width "$2"; pad=$((24-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%2s%b  %s%*s%b%2s%b  %s\n' "$C_ACCENT" "$1" "$C_RESET" "$2" "$pad" '' "$C_ACCENT" "$3" "$C_RESET" "$4"; }
 ui_option() { printf '  %b%2s%b  %s\n' "$C_ACCENT" "$1" "$C_RESET" "$2"; }
 ui_note() { printf '  %b%s%b\n' "$C_MUTED" "$1" "$C_RESET"; }
@@ -66,9 +65,10 @@ ui_fetch() {
 }
 ui_load_versions() {
     local machine tag name
-    UI_OFFICIAL='' UI_OWN='' UI_OFFICIAL_SHA='' UI_CLIENT='' UI_CADDY_LATEST='' UI_PACKAGE_READY=0
+    UI_OFFICIAL='' UI_OWN='' UI_OFFICIAL_SHA='' UI_CLIENT='' UI_CADDY_LATEST='' UI_HYSTERIA='' UI_PACKAGE_READY=0
     if [[ -f $UI_CACHE/official.json ]]; then tag=$(jq -r '.tag_name // empty' "$UI_CACHE/official.json" 2>/dev/null) || tag=''; valid_tag "$tag" && UI_OFFICIAL=$tag; fi
     if [[ -f $UI_CACHE/own.json ]]; then tag=$(jq -r '.tag_name // empty|sub("^server-";"")' "$UI_CACHE/own.json" 2>/dev/null) || tag=''; valid_tag "$tag" && UI_OWN=$tag; fi
+    if [[ -f $UI_CACHE/hysteria.json ]]; then tag=$(jq -r '.tag_name // empty' "$UI_CACHE/hysteria.json" 2>/dev/null) || tag=''; tag=${tag#app/}; [[ $tag =~ ^v2\.[0-9]+\.[0-9]+$ ]] && UI_HYSTERIA=$tag; fi
     if [[ -n $UI_OFFICIAL && -f $UI_CACHE/tags.json ]]; then UI_OFFICIAL_SHA=$(jq -r --arg tag "$UI_OFFICIAL" '[.[]|select(.name==$tag)|.commit.sha][0] // empty' "$UI_CACHE/tags.json" 2>/dev/null) || UI_OFFICIAL_SHA=''; fi
     [[ ! -f $UI_CACHE/client.json ]] || UI_CLIENT=$(jq -r '.tag_name // empty' "$UI_CACHE/client.json" 2>/dev/null) || UI_CLIENT=''
     [[ ! -f $UI_CACHE/caddy.json ]] || UI_CADDY_LATEST=$(jq -r '.tag_name // empty' "$UI_CACHE/caddy.json" 2>/dev/null) || UI_CADDY_LATEST=''
@@ -86,6 +86,7 @@ ui_versions() {
         ui_phase '查询官方服务端、本仓库构建及参考版本（并行查询，约 5 秒超时）'
         ui_fetch "repos/$UPSTREAM/releases/latest" official & pids+=("$!")
         ui_fetch "repos/$REPO/releases/latest" own & pids+=("$!")
+        ui_fetch "repos/apernet/hysteria/releases/latest" hysteria & pids+=("$!")
         ui_fetch "repos/$UPSTREAM/tags?per_page=30" tags & pids+=("$!")
         ui_fetch 'repos/klzgrad/naiveproxy/releases/latest' client & pids+=("$!")
         ui_fetch 'repos/caddyserver/caddy/releases/latest' caddy & pids+=("$!")
@@ -121,11 +122,40 @@ ui_local_version() {
 }
 ui_naive_summary() {
     if [[ -n ${UI_INSTALLED_TAG:-} ]]; then
-        if [[ $UI_INSTALLED_TAG == "${UI_OFFICIAL:-}" ]]; then REPLY="Naive $UI_INSTALLED_TAG · 官方最新"
-        elif [[ -n ${UI_OWN:-} && $UI_INSTALLED_TAG == "$UI_OWN" ]]; then REPLY="Naive $UI_INSTALLED_TAG · 本仓库构建 · 官方 ${UI_OFFICIAL:-未获取}"
-        else REPLY="Naive 当前 $UI_INSTALLED_TAG · 官方 ${UI_OFFICIAL:-未获取} · 构建 ${UI_OWN:-未获取}"; fi
-    elif [[ -n ${UI_CADDY:-} ]]; then REPLY="Naive $UI_CADDY"
-    else REPLY='Naive 未安装'; fi
+        if [[ $UI_INSTALLED_TAG == "${UI_OFFICIAL:-}" ]]; then REPLY="$UI_INSTALLED_TAG · 官方最新"
+        elif [[ -n ${UI_OWN:-} && $UI_INSTALLED_TAG == "$UI_OWN" ]]; then REPLY="$UI_INSTALLED_TAG · 本仓库构建 · 官方 ${UI_OFFICIAL:-未获取}"
+        else REPLY="当前 $UI_INSTALLED_TAG · 官方 ${UI_OFFICIAL:-未获取} · 构建 ${UI_OWN:-未获取}"; fi
+    elif [[ -n ${UI_CADDY:-} ]]; then REPLY="$UI_CADDY"
+    else REPLY='未安装'; fi
+}
+ui_client_summary() {
+    local installed='' latest=${UI_CLIENT#v} bin sig file re='1[0-9]{2}\.[0-9]+\.[0-9]+\.[0-9]+-[0-9]+'
+    for bin in "$(command -v naive 2>/dev/null)" /usr/local/bin/naive /usr/bin/naive /usr/local/naive/naive /opt/naive/naive /root/naive/naive; do
+        [[ -n $bin && -x $bin ]] || continue
+        sig=$(stat -c '%i:%s:%Y' "$bin" 2>/dev/null) || sig=$bin
+        sig=$bin:$sig
+        if [[ $sig == "$UI_CLIENT_SIG" ]]; then installed=$UI_CLIENT_INSTALLED; break; fi
+        installed=$(timeout 2 "$bin" --version 2>&1 | grep -oE "$re" | head -n1) || installed=''
+        [[ -n $installed ]] || installed=$(timeout 2 "$bin" -version 2>&1 | grep -oE "$re" | head -n1) || installed=''
+        if [[ -n $installed ]]; then UI_CLIENT_SIG=$sig; UI_CLIENT_INSTALLED=$installed; break; fi
+    done
+    if [[ -z $installed ]]; then
+        for file in /usr/local/etc/naive/version /etc/naive/version /usr/local/naive/version /root/naive/version /usr/local/bin/naive.version; do
+            [[ -f $file ]] || continue
+            installed=$(grep -oE "$re" "$file" 2>/dev/null | head -n1) || installed=''
+            [[ -n $installed ]] && break
+        done
+    fi
+    if [[ -n $installed ]]; then
+        if [[ -z $latest ]]; then REPLY="已安装 v$installed"
+        elif version_gt "$latest" "$installed"; then REPLY="已安装 v$installed · 最新 v$latest · 有更新"
+        elif [[ $latest == "$installed" ]]; then REPLY="已安装 v$installed · 最新"
+        else REPLY="已安装 v$installed · 参考 v$latest"; fi
+    elif [[ -n $latest ]]; then
+        REPLY="参考 v$latest（本工具不更新客户端）"
+    else
+        REPLY='未检测到客户端内核'
+    fi
 }
 ui_config_info() {
     local sig
@@ -178,18 +208,18 @@ ui_version_rows() {
 }
 ui_recommendation() {
     local tone=$C_WARN message
-    if [[ -f $STATE/pending.json ]]; then tone=$C_BAD; message='存在未完成事务 → 先选 12 恢复，再做其他变更'
+    if [[ -f $STATE/pending.json ]]; then tone=$C_BAD; message='存在未完成事务 → 先选 11 恢复，再做其他变更'
     elif [[ ! -x $BIN ]]; then message='尚未安装服务端 → 选 1 开始全新部署'
-    elif [[ ! -f $CONFIG ]]; then tone=$C_BAD; message='主配置文件缺失 → 选 14 诊断，先不要更新'
-    elif [[ ${UI_SERVICE_ACTIVE:-unknown} != active && ${UI_SERVICE_ACTIVE:-unknown} != unknown ]]; then tone=$C_BAD; message='服务未运行 → 选 4 检查服务，或选 8 查看日志'
+    elif [[ ! -f $CONFIG ]]; then tone=$C_BAD; message='主配置文件缺失 → 选 12 诊断，先不要更新'
+    elif [[ ${UI_SERVICE_ACTIVE:-unknown} != active && ${UI_SERVICE_ACTIVE:-unknown} != unknown ]]; then tone=$C_BAD; message='服务未运行 → 选 4 检查服务，或选 7 查看日志'
     elif [[ $UI_CONFIG_STATUS == 解析失败* ]]; then tone=$C_BAD; message='配置解析异常 → 先选 3 使用服务环境完整验证，再考虑更新'
-    elif [[ ${UI_CERT_WARN:-0} == 2 ]]; then tone=$C_BAD; message='证书文件已过期 → 先选 9 检查续期与重载'
+    elif [[ ${UI_CERT_WARN:-0} == 2 ]]; then tone=$C_BAD; message='证书文件已过期 → 先选 8 检查续期与重载'
     elif [[ -f $UI_CACHE/official.failed || -f $UI_CACHE/own.failed ]]; then message='在线查询失败，当前展示缓存；按 r 重试，或继续管理本地服务'
     elif [[ -n $UI_INSTALLED_TAG && $UI_INSTALLED_TAG == "$UI_OFFICIAL" && ! -f $UI_CACHE/official.failed ]]; then message=''
-    elif [[ -n $UI_INSTALLED_TAG && $UI_INSTALLED_TAG == "$UI_OWN" && $UI_OWN != "$UI_OFFICIAL" ]]; then message='已是本仓库当前构建；官方有其他版本，可选 6 查看源码方案'
-    elif [[ -n $UI_OFFICIAL && -n $UI_INSTALLED_TAG && $UI_INSTALLED_TAG != "$UI_OFFICIAL" ]]; then message='当前发行版与官方最新不同 → 选 6 查看版本差异后决定是否更新'
+    elif [[ -n $UI_INSTALLED_TAG && $UI_INSTALLED_TAG == "$UI_OWN" && $UI_OWN != "$UI_OFFICIAL" ]]; then message='已是本仓库当前构建；官方有其他版本，可选 5 查看源码方案'
+    elif [[ -n $UI_OFFICIAL && -n $UI_INSTALLED_TAG && $UI_INSTALLED_TAG != "$UI_OFFICIAL" ]]; then message='当前发行版与官方最新不同 → 选 5 查看版本差异后决定是否更新'
     elif [[ -z $UI_OFFICIAL ]]; then message='官方版本查询不可用；可管理本地服务，按 r 重试查询'
-    else message='当前发行标签尚未识别 → 选 6 核对插件提交与目标构建后再更新'; fi
+    else message='当前发行标签尚未识别 → 选 5 核对插件提交与目标构建后再更新'; fi
     [[ -n $message ]] || return 0
     printf '  %b! %s%b\n' "$tone" "$message" "$C_RESET"
 }
@@ -221,8 +251,12 @@ ui_system_rows() {
     site="$address · ${UI_PORTS:-未识别} · ${UI_PROTOCOLS:-未知协议}"
     [[ $UI_CONFIG_STATUS == 解析通过 ]] || site+=" · $UI_CONFIG_STATUS"
     site+=" · 证书 $REPLY"
-    ui_kv '系统' "${os:-$(uname -s)} · $(uname -m) · 内核 $(uname -r)"
-    ui_kv '资源' "${resources:-内存未知} · 磁盘 ${disk:-未知}"
+    if (( ${COLUMNS:-80} >= 90 )); then
+        ui_kv '系统' "${os:-$(uname -s)} · $(uname -m) · 内核 $(uname -r) · ${resources:-内存未知} · 磁盘 ${disk:-未知}"
+    else
+        ui_kv '系统' "${os:-$(uname -s)} · $(uname -m) · 内核 $(uname -r)"
+        ui_kv '资源' "${resources:-内存未知} · 磁盘 ${disk:-未知}"
+    fi
     ui_kv '服务' "$service · PID $pid · 运行 $up · 内存 $memory · 自启 $enabled"
     ui_kv '站点' "$site"
     ui_kv '优化' "$bbr · 队列 $queue · WARP $warp"
@@ -1130,13 +1164,33 @@ udp_tune() {
     printf 'net.core.rmem_max = %s\nnet.core.wmem_max = %s\n' "$rmem" "$wmem" >"$STATE/backups/$id/new-udp.conf"
     copy_atomic "$STATE/backups/$id/new-udp.conf" "$UDP_FILE"; chmod 644 "$UDP_FILE"; sysctl -p "$UDP_FILE"
     commit_tx
-    say '这只提高 socket 缓冲区上限，不预分配整块内存；BBR/FQ 在菜单 11 单独管理。'
+    say '这只提高 socket 缓冲区上限，不预分配整块内存；BBR/FQ 在菜单 9 单独管理。'
 }
-hysteria_version() { "$1" version 2>&1 | awk 'tolower($1)=="version:" || tolower($1)=="version" {print $2; found=1; exit} END{if(!found)exit 1}'; }
+hysteria_version() {
+    local version
+    version=$("$1" version 2>&1 | awk 'tolower($1)=="version:" || tolower($1)=="version" {print $2; found=1; exit} END{if(!found)exit 1}') || return 1
+    printf '%s\n' "${version#app/}"
+}
+hysteria_latest() {
+    local tag
+    if [[ ${RELEASE:-latest} != latest ]]; then
+        tag=${RELEASE#app/}
+        [[ $tag =~ ^v2\.[0-9]+\.[0-9]+$ ]] || die 'Hysteria 目标版本须为 app/v2.x.y 或 v2.x.y'
+        REPLY=app/$tag
+        return 0
+    fi
+    tag=$(api repos/apernet/hysteria/releases/latest | jq -er .tag_name) || die '无法查询 Hysteria 最新版本；请检查网络或使用 --release 指定'
+    [[ $tag =~ ^app/v2\.[0-9]+\.[0-9]+$ ]] || die 'Hysteria 最新标签格式异常'
+    REPLY=$tag
+}
 hysteria_fetch() {
-    local tag=$RELEASE machine metadata name expected actual work url
+    local tag=${1:-${RELEASE:-latest}} machine metadata name expected actual work url
     case $(uname -m) in x86_64) machine=amd64;; aarch64|arm64) machine=arm64;; armv7l) machine=arm;; riscv64) machine=riscv64;; *) die '不支持的 Hysteria 架构';; esac
-    if [[ $tag == latest ]]; then metadata=$(api repos/apernet/hysteria/releases/latest); tag=$(jq -er .tag_name <<<"$metadata"); fi
+    [[ $tag == app/* || $tag == latest ]] || tag=app/$tag
+    if [[ $tag == latest || $tag == app/latest ]]; then
+        metadata=$(api repos/apernet/hysteria/releases/latest) || die '无法查询 Hysteria 最新版本'
+        tag=$(jq -er .tag_name <<<"$metadata") || die 'Hysteria 返回数据缺少标签'
+    fi
     [[ $tag =~ ^app/v2\.[0-9]+\.[0-9]+$ ]] || die 'Hysteria 需要 app/v2.x.y 稳定版本标签'
     tmpdir; work=$REPLY; name=hysteria-linux-$machine; url=https://github.com/apernet/hysteria/releases/download/$tag
     ui_phase "下载 Hysteria $tag / $machine（当前服务继续运行）"
@@ -1217,11 +1271,20 @@ EOF
     say "安装成功。请放行 UDP $port；客户端地址 $domain:$port，密码保存在 $CONFIG 的 auth.password。"
 }
 hysteria_update() {
-    local staged id was_active=0 execstart
+    local staged id was_active=0 execstart target current
     regular "$BIN"; regular "$CONFIG"
     execstart=$(systemctl show "$SERVICE" -p ExecStart --value)
     [[ $execstart == *"path=$BIN ;"* ]] || die '服务 ExecStart 与目标二进制不一致，拒绝更新'
-    say "当前：$(hysteria_version "$BIN")"; hysteria_fetch; staged=$REPLY
+    current=$(hysteria_version "$BIN") || current=''
+    hysteria_latest; target=$REPLY
+    if [[ -n $current && $current == "${target#app/}" ]]; then
+        say "当前已是最新：$current"; return 0
+    fi
+    if [[ -n $current && ${RELEASE:-latest} == latest ]] && version_gt "$current" "${target#app/}"; then
+        say "当前 $current 高于官方最新 ${target#app/}，不自动降级；需要指定版本请用 --release。"; return 0
+    fi
+    say "当前：${current:-未知}；目标：${target#app/}"
+    hysteria_fetch "$target"; staged=$REPLY
     if cmp -s "$BIN" "$staged"; then say '二进制相同，无需更新'; return; fi
     ask '备份并替换 Hysteria 二进制？配置与 unit 保持原样；运行中的服务会重启' || return
     active && was_active=1
@@ -1252,45 +1315,49 @@ hysteria_action() {
     esac
 }
 ui_hysteria_summary() {
-    local bin=${HYSTERIA_BIN:-/usr/local/bin/hysteria} service=${HYSTERIA_SERVICE:-hysteria-server.service} status version
-    if [[ ! -x $bin ]]; then REPLY='Hysteria 未安装'; return; fi
+    local bin=${HYSTERIA_BIN:-/usr/local/bin/hysteria} service=${HYSTERIA_SERVICE:-hysteria-server.service} status version summary
+    if [[ ! -x $bin ]]; then REPLY='未安装'; return; fi
     version=$(timeout 2 bash -c '"$1" version 2>&1' _ "$bin" | awk 'tolower($1)=="version:" || tolower($1)=="version" {print $2;exit}') || version=''
+    version=${version#app/}
     status=$(timeout 2 systemctl is-active "$service" 2>/dev/null) || status=${status:-未知}
-    REPLY="Hysteria ${version:-未知} · ${status:-未知}"
+    summary="${version:-未知} · ${status:-未知}"
+    if [[ -n $version && -n ${UI_HYSTERIA:-} ]]; then
+        if version_gt "$UI_HYSTERIA" "$version"; then summary+=" · 可更新 $UI_HYSTERIA"
+        elif [[ $UI_HYSTERIA == "$version" ]]; then summary+=" · 最新"; fi
+    fi
+    REPLY=$summary
 }
 ui_hysteria_status() {
-    if [[ ! -x ${HYSTERIA_BIN:-/usr/local/bin/hysteria} ]]; then ui_value 'Hysteria 2' '未安装 · 选 15 安装 / 接管已有部署'; return; fi
+    if [[ ! -x ${HYSTERIA_BIN:-/usr/local/bin/hysteria} ]]; then ui_value 'Hysteria 2' '未安装 · 选 13 安装 / 接管已有部署'; return; fi
     ui_hysteria_summary
-    ui_value 'Hysteria 2' "$REPLY · 选 15 管理"
-}
-ui_version_line() {
-    local naive
-    ui_naive_summary; naive=$REPLY
-    ui_hysteria_summary
-    ui_kv '版本' "$naive · $REPLY"
+    ui_value 'Hysteria 2' "$REPLY · 选 13 管理"
 }
 run_menu_command() { local result; set +e; bash "$SELF" "$@"; result=$?; set -e; [[ $result == 0 ]] || printf '  %b操作未完成（退出码 %s），请查看上方原因%b\n' "$C_BAD" "$result" "$C_RESET"; }
 menu_draw() {
     ui_versions 0
     ui_local_version
     ui_home_heading
-    printf '\n'
-    ui_group '本机概况'
+    ui_option 1 '安装 / 部署'
+    ui_option 2 '卸载服务端'
+    ui_option 3 'Caddyfile 管理'
+    ui_option 4 '服务启停'
+    ui_line
+    ui_option 5 '版本 / 更新'
+    ui_option 6 '分享 / 客户端'
+    ui_option 7 '运行日志'
+    ui_option 8 '证书 / ACME'
+    ui_option 9 '网络优化（BBR/UDP）'
+    ui_option 10 'WARP / 出口'
+    ui_line
+    ui_option 11 '回滚 / 恢复'
+    ui_option 12 '工具 / 诊断'
+    ui_option 13 'Hysteria 2 管理'
+    ui_line
+    ui_naive_summary; ui_kv '服务端' "$REPLY"
+    ui_client_summary; ui_kv '客户端' "$REPLY"
+    ui_hysteria_summary; ui_kv 'Hysteria' "$REPLY"
     ui_system_rows
-    ui_version_line
     ui_recommendation
-    printf '\n'
-    ui_group 'Naive 管理'
-    ui_pair 1 '安装 / 部署' 2 '卸载服务端'
-    ui_pair 3 'Caddyfile' 4 '服务启停'
-    ui_pair 5 '版本 / 刷新' 6 '内核更新'
-    ui_pair 7 '分享 / 客户端' 8 '运行日志'
-    printf '\n'
-    ui_group '系统与维护'
-    ui_pair 9 '证书 / ACME' 10 'WARP / 出口'
-    ui_pair 11 '网络优化（BBR/UDP）' 12 '回滚 / 恢复'
-    ui_pair 13 '快捷命令' 14 '诊断 / 依赖'
-    ui_option 15 'Hysteria 2 管理'
     ui_line
     ui_note 'r 刷新 · 0 退出 · 子菜单 0 返回'
 }
@@ -1305,8 +1372,7 @@ submenu_draw() {
         warp) ui_section 'WARP 与出口检测'; ui_option 1 '查看连接状态和设置'; ui_option 2 '从 Cloudflare 官方源安装'; ui_option 3 '连接本地代理模式'; ui_option 4 '断开 WARP'; ui_option 5 '检测直连出口'; ui_option 6 '检测本地 SOCKS5 出口';;
         bbr) ui_section '网络优化（BBR / UDP）'; bbr_status 2>/dev/null || ui_note '当前系统无法读取 sysctl'; ui_option 1 '刷新当前参数'; ui_option 2 '启用 BBR + FQ'; ui_option 3 '切换 cubic + fq_codel'; ui_option 4 '恢复某次修改前的参数'; ui_option 5 'UDP 缓冲区上限优化（可回滚）'; ui_note '只使用当前内核；修改独立 sysctl 文件，不安装第三方内核';;
         backup) ui_section '备份与恢复'; [[ ! -f $STATE/pending.json ]] || printf '  %b检测到未完成事务，请先选择 4 恢复%b\n' "$C_BAD" "$C_RESET"; ui_option 1 '列出备份'; ui_option 2 '恢复最近一次操作前状态'; ui_option 3 '指定备份恢复'; ui_option 4 '恢复中断事务';;
-        shortcut) ui_section '快捷命令'; ui_value '主命令' "$TOOL"; ui_option 1 '安装 / 更新当前本地快捷命令'; ui_option 2 '备份旧脚本并接管 /usr/bin/na'; ui_option 3 '检查并更新工具自身'; ui_note '默认自动检查 tool-v* Release；NAIVE_AUTO_UPDATE=0 可关闭';;
-        doctor) ui_section '系统诊断与依赖'; ui_option 1 '只读诊断'; ui_option 2 '通过系统软件源安装依赖';;
+        shortcut) ui_section '工具 / 诊断'; ui_value '主命令' "$TOOL"; ui_option 1 '安装 / 更新当前本地快捷命令'; ui_option 2 '备份旧脚本并接管 /usr/bin/na'; ui_option 3 '检查并更新工具自身'; ui_option 4 '系统诊断'; ui_option 5 '安装依赖'; ui_note '默认自动检查 tool-v* Release；NAIVE_AUTO_UPDATE=0 可关闭';;
     esac
     ui_line; ui_option 0 '返回主菜单'
 }
@@ -1323,7 +1389,7 @@ submenu() {
             warp:1) run_menu_command warp status;; warp:2) run_menu_command warp install;; warp:3) run_menu_command warp connect;; warp:4) run_menu_command warp disconnect;; warp:5) run_menu_command network-check;; warp:6) prompt port '  SOCKS5 端口' 40000; run_menu_command network-check "$port";;
             bbr:1) continue;; bbr:2) run_menu_command bbr enable;; bbr:3) run_menu_command bbr disable;; bbr:4) find "$STATE/backups" -name bbr.json -print 2>/dev/null || :; prompt id '  备份目录 ID'; [[ -z $id ]] || run_menu_command rollback "$id";; bbr:5) run_menu_command tune udp;;
             backup:1) run_menu_command backups;; backup:2) run_menu_command rollback;; backup:3) prompt id '  备份 ID'; [[ -z $id ]] || run_menu_command rollback "$id";; backup:4) run_menu_command recover;;
-            shortcut:1) run_menu_command install-tool;; shortcut:2) run_menu_command install-na;; shortcut:3) run_menu_command self-update;; doctor:1) run_menu_command doctor;; doctor:2) run_menu_command deps;;
+            shortcut:1) run_menu_command install-tool;; shortcut:2) run_menu_command install-na;; shortcut:3) run_menu_command self-update;; shortcut:4) run_menu_command doctor;; shortcut:5) run_menu_command deps;;
             *) say '  编号无效，请重新选择';;
         esac
         UI_LOCAL_SIG='' UI_CONFIG_SIG=''; ui_pause
@@ -1362,9 +1428,9 @@ menu() {
     while :; do
         menu_draw; read -r -p '  请选择 [r 刷新 / 0 退出]：' choice || break
         case $choice in
-            0|q) break;; r|R|5) UI_LOCAL_SIG='' UI_CONFIG_SIG=''; tool_auto_update 1; ui_versions 1; continue;;
-            3) submenu config;; 4) submenu service;; 6) upgrade_menu;; 9) submenu cert;; 10) submenu warp;; 11) submenu bbr;; 12) submenu backup;; 13) submenu shortcut;; 14) submenu doctor;; 15) submenu hysteria;;
-            1) run_menu_command deploy; ui_pause;; 2) run_menu_command uninstall; ui_pause;; 7) run_menu_command share; ui_pause;; 8) run_menu_command logs; ui_pause;;
+            0|q) break;; r|R) UI_LOCAL_SIG='' UI_CONFIG_SIG=''; tool_auto_update 1; ui_versions 1; continue;;
+            3) submenu config;; 4) submenu service;; 5) upgrade_menu;; 8) submenu cert;; 9) submenu bbr;; 10) submenu warp;; 11) submenu backup;; 12) submenu shortcut;; 13) submenu hysteria;;
+            1) run_menu_command deploy; ui_pause;; 2) run_menu_command uninstall; ui_pause;; 6) run_menu_command share; ui_pause;; 7) run_menu_command logs; ui_pause;;
             *) say '  编号无效'; ui_pause;;
         esac
         UI_LOCAL_SIG='' UI_CONFIG_SIG=''
