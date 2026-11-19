@@ -82,7 +82,7 @@ sudo naive-update backups
 sudo naive-update rollback BACKUP_ID
 ```
 
-菜单 11 管理 BBR/FQ；菜单 16 只把不足的 UDP 接收/发送缓冲区上限提高至 16 MiB，保留已有较大值，并备份原运行值和独立 sysctl 文件。它提高 socket 上限，不预分配整块内存。
+菜单 11 的网络优化管理 BBR/FQ 和 UDP 缓冲区：BBR 用 `bbr` + `fq`，UDP 项只把不足的接收/发送缓冲区上限提高至 16 MiB，保留已有较大值，并备份原运行值和独立 sysctl 文件。它提高 socket 上限，不预分配整块内存。
 
 新建服务设置 `LimitNOFILE=1048576`；已有 unit 保持不变。BBR 是内核 TCP 拥塞控制，Hysteria QUIC 的拥塞控制由应用管理。实际速度仍受线路、CPU 和服务商限制。脚本不替换内核、不批量覆盖 sysctl、不修改 SSH 或防火墙。
 

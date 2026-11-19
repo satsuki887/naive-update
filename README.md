@@ -2,7 +2,7 @@
 
 独立的交互式 **Bash 运维工具**：安装与更新 Naive / Hysteria 2、管理服务和外部证书、BBR/FQ、UDP 缓冲区及 WARP。运行时只需一个 `naive-update.sh`，无需 Python 或其他配套源码文件。
 
-新增入口：**15 Hysteria 2 管理**、**16 UDP 缓冲区优化**。菜单 9 可直接安装 acme.sh，并给出 NameSilo DNS-01 申请和 install-cert 部署示例；新安装默认使用已有证书，并提供固定证书目录及续期部署钩子。详见 [Hysteria、证书与优化指南](docs/hysteria-and-certificates.md) 和 [上线前审视 / CI 故障证据](docs/readiness-review.md)。
+新增入口：**15 Hysteria 2 管理**；UDP 缓冲区优化并入 **11 网络优化**。菜单 9 可直接安装 acme.sh，并给出 NameSilo DNS-01 申请和 install-cert 部署示例；新安装默认使用已有证书，并提供固定证书目录及续期部署钩子。详见 [Hysteria、证书与优化指南](docs/hysteria-and-certificates.md) 和 [上线前审视 / CI 故障证据](docs/readiness-review.md)。
 
 本工具由第三方维护，服务端使用 Naive 官方 `klzgrad/forwardproxy` 源码及其 Caddy 版本和补丁。GitHub Actions 定时编译 Linux amd64 安装包。工具可从 `tool-v*` Release 校验后自动更新自身，也不使用原博主的脚本或二进制。
 
@@ -39,12 +39,11 @@ sudo naive-update
 | 8 | systemd 日志 |
 | 9 | 证书状态、重载、导入、安装 acme.sh、NameSilo 申请与 install-cert 示例、已有证书的列表/续期 |
 | 10 | Cloudflare 官方 WARP 安装、状态、本地代理连接/断开、出口可达性检测 |
-| 11 | BBR + FQ、cubic + fq_codel、从备份恢复原网络参数 |
+| 11 | 网络优化：BBR + FQ、cubic + fq_codel、UDP 缓冲区上限（可回滚） |
 | 12 | 备份与回滚、中断事务恢复 |
 | 13 | 安装快捷命令、工具自更新、可选接管 na |
 | 14 | 系统诊断、安装依赖 |
 | 15 | Hysteria 2 安装、更新、服务、配置、证书与恢复 |
-| 16 | UDP 缓冲区上限优化（保留原值，可回滚） |
 
 ## 首页状态与返回导航（2.1）
 
@@ -52,7 +51,7 @@ sudo naive-update
 
 首页直接显示系统/内存/磁盘、服务运行状态/PID/运行时长/开机启动、域名与监听、协议、配置解析结果和证书有效期。BBR 是否启用、当前队列及 WARP 安装/连接状态也在首页显示，无需先进入附加功能菜单。
 
-主页展示当前 Naive、官方服务端、本仓库构建及 Hysteria 状态；完整的 Caddy 版本、插件提交、包就绪情况和参考版本放在更新页及 `check` 命令中。旧部署优先从真实插件提交匹配官方标签；本工具安装记录只有与当前二进制 SHA256 一致时才采用。不能识别时显示未知，不伪造版本。
+主页用一行汇总当前 Naive、官方/本仓库构建差异及 Hysteria 状态；完整的 Caddy 版本、插件提交、包就绪情况和参考版本放在更新页及 `check` 命令中。旧部署优先从真实插件提交匹配官方标签；本工具安装记录只有与当前二进制 SHA256 一致时才采用。不能识别时显示未知，不伪造版本。
 
 所有管理子菜单都支持 **0 返回主菜单**，操作后留在本子菜单；更新页也可返回。首页 `r` 或 `5` 刷新本机信息与在线版本。正常交互终端使用颜色和分区；管道、无色终端或 `NO_COLOR=1` 下保留可读纯文本。
 

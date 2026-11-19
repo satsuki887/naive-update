@@ -65,7 +65,8 @@ ok 'connected and disconnected WARP are distinguished'
 jq -n --arg sha "$(digest "$BIN")" '{release:"v2.11.7-naive2",sha256:$sha,forwardproxy:{commit:"e747854e7874000000000000000000000000000000"}}' >"$STATE/current-build.json"
 UI_LOCAL_SIG=''; ui_local_version
 [[ $UI_INSTALLED_TAG == v2.11.7-naive2 ]] || fail 'receipt-based version'
-ui_recommendation >"$work/recommendation"; grep -q '无需重复更新' "$work/recommendation"
+ui_recommendation >"$work/recommendation"; [[ ! -s $work/recommendation ]] || fail 'up-to-date recommendation should be omitted'
+ui_naive_summary; [[ $REPLY == *官方最新* ]] || fail 'up-to-date version summary'
 ok 'verified current build is marked up to date'
 jq '.sha256="wrong-hash"' "$STATE/current-build.json" >"$work/bad-receipt"; cp "$work/bad-receipt" "$STATE/current-build.json"
 UI_LOCAL_SIG=''; ui_local_version
@@ -95,6 +96,6 @@ NO_COLOR=1 NAIVE_COLOR=always ui_init
 [[ -z $C_ACCENT ]] || fail 'NO_COLOR ignored'
 ok 'NO_COLOR keeps output readable without ANSI escapes'
 menu_draw >"$work/home"
-grep -q '官方服务端' "$work/home"; grep -q '本仓库构建' "$work/home"; grep -q 'BBR' "$work/home"
-ok 'dashboard includes operational guidance and version sources'
+grep -q 'Naive' "$work/home"; grep -q 'Hysteria' "$work/home"; grep -q 'BBR' "$work/home"
+ok 'compact dashboard includes status and version summaries'
 say "Passed $count UI checks"
