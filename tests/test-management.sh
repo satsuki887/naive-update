@@ -98,3 +98,24 @@ grep -q 'cert deploy' <<<"$out"
 out=$(acme_example hysteria)
 grep -q 'hysteria cert-deploy' <<<"$out"
 echo 'ok - ACME examples render NameSilo issuance and service-specific deployment'
+# Regression: acme.sh's installer must run from its clone directory.
+acme_home=$TEST_WORK/acme-home
+root() { :; }
+git() {
+    local -a args=("$@")
+    local dir=${args[${#args[@]}-1]}
+    mkdir -p "$dir"
+    cat >"$dir/acme.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ -f ./acme.sh ]] || { echo "cp: cannot stat 'acme.sh'" >&2; exit 1; }
+mkdir -p "$HOME/.acme.sh"
+cp ./acme.sh "$HOME/.acme.sh/acme.sh"
+EOF
+    chmod +x "$dir/acme.sh"
+}
+# shellcheck disable=SC2031 # exported only for the fake installer used by this test
+export HOME=$acme_home
+ACME_HOME='' ACME_EMAIL=ci@example.com YES=1 STATE=$TEST_WORK/acme-state TOOL=/usr/bin/naive-update
+acme_install >/dev/null
+[[ -x $acme_home/.acme.sh/acme.sh ]]
+echo 'ok - acme.sh installer runs from its clone directory'

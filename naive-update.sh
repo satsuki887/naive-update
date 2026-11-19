@@ -796,9 +796,9 @@ acme_install() {
     fi
     tmpdir; dir=$REPLY/acme.sh
     GIT_TERMINAL_PROMPT=0 git clone --depth 1 https://github.com/acmesh-official/acme.sh.git "$dir" || die '克隆 acme.sh 失败；请检查网络或先运行 deps 安装 git'
-    local -a install=("$dir/acme.sh" --install -m "$email")
+    local -a install=(--install -m "$email")
     [[ -z ${ACME_HOME:-} ]] || install+=(--home "$ACME_HOME")
-    "${install[@]}" || die 'acme.sh 安装失败'
+    (cd "$dir" && ./acme.sh "${install[@]}") || die 'acme.sh 安装失败'
     [[ -x $client ]] || die "安装后未找到 $client"
     mkdir -p "${ACME_STAGE:-$STATE/acme-staging}"; chmod 700 "${ACME_STAGE:-$STATE/acme-staging}"
     say "acme.sh 已安装：$client"
