@@ -5,7 +5,7 @@
 # shellcheck disable=SC2016,SC2030,SC2031
 set -Eeuo pipefail
 umask 077
-VERSION=2.3.2
+VERSION=2.3.3
 REPO=satsuki887/naive-update
 UPSTREAM=klzgrad/forwardproxy
 BIN=${NAIVE_BIN:-/usr/bin/caddy}
@@ -24,6 +24,7 @@ UI_CACHE='' UI_LOCAL_SIG='' UI_CONFIG_SIG='' UI_JSON=''
 UI_CADDY='' UI_COMMIT='' UI_INSTALLED_TAG='' UI_ORIGIN='' UI_RECEIPT_TAG=''
 UI_DOMAIN='' UI_PORTS='' UI_PROTOCOLS='' UI_CONFIG_STATUS=''
 UI_OFFICIAL='' UI_OWN='' UI_OFFICIAL_SHA='' UI_CLIENT='' UI_CADDY_LATEST='' UI_HYSTERIA='' UI_PACKAGE_READY=0
+TOOL_LATEST='' TOOL_CHECK_TTL=300
 C_RESET='' C_TITLE='' C_ACCENT='' C_GOOD='' C_WARN='' C_BAD='' C_MUTED=''
 ui_init() {
     C_RESET='' C_TITLE='' C_ACCENT='' C_GOOD='' C_WARN='' C_BAD='' C_MUTED=''
@@ -685,9 +686,9 @@ tool_check_update() {
     if [[ $force != 1 && -f $UI_CACHE/tool-checked && -f $UI_CACHE/tool-latest ]]; then
         read -r checked <"$UI_CACHE/tool-checked" || checked=0
         [[ $checked =~ ^[0-9]+$ ]] || checked=0
-        if ((now - checked < 21600)); then
+        if ((now - checked < TOOL_CHECK_TTL)); then
             read -r latest <"$UI_CACHE/tool-latest" || latest=''
-            [[ -n $latest ]] && { REPLY=$latest; return 0; }
+            [[ -n $latest ]] && { REPLY=$latest; TOOL_LATEST=$latest; return 0; }
         fi
     fi
     tool_latest_tag || return 1
@@ -726,11 +727,12 @@ tool_self_update() {
 }
 tool_auto_update() {
     local force=${1:-0} latest
-    [[ ${NAIVE_AUTO_UPDATE:-1} == 0 || ${NAIVE_SELF_UPDATED:-0} == 1 ]] && return 0
+    [[ ${NAIVE_SELF_UPDATED:-0} == 1 ]] && return 0
     [[ $EUID == 0 ]] || return 0
     tool_check_update "$force" || return 0
     latest=${REPLY#tool-v}
     version_gt "$latest" "$VERSION" || return 0
+    [[ ${NAIVE_AUTO_UPDATE:-1} == 0 ]] && return 0
     say "发现工具新版本 v$latest（当前 v$VERSION），正在自动更新……"
     if tool_update "tool-v$latest" && [[ -x $TOOL ]]; then
         export NAIVE_SELF_UPDATED=1
@@ -1320,6 +1322,9 @@ menu_draw() {
     ui_hysteria_summary; ui_kv 'Hysteria' "$REPLY"
     ui_system_rows
     ui_recommendation
+    if [[ -n ${TOOL_LATEST:-} ]] && version_gt "${TOOL_LATEST#tool-v}" "$VERSION"; then
+        printf '  %b工具有新版本 %s → 选 12 → 3 更新%b\n' "$C_WARN" "${TOOL_LATEST#tool-}" "$C_RESET"
+    fi
     ui_line
     ui_note 'r 刷新   0 退出   子菜单 0 返回'
 }

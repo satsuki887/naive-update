@@ -109,4 +109,9 @@ ok 'NO_COLOR keeps output readable without ANSI escapes'
 menu_draw >"$work/home"
 grep -q 'Naive' "$work/home"; grep -q 'Hysteria' "$work/home"; grep -q 'BBR' "$work/home"
 ok 'compact dashboard includes status and version summaries'
+TOOL_LATEST=tool-v9.9.9
+menu_draw >"$work/home-update"
+grep -q '工具有新版本 v9.9.9' "$work/home-update" || fail 'tool update notice'
+TOOL_LATEST=''
+ok 'dashboard shows a pending tool update notice'
 say "Passed $count UI checks"

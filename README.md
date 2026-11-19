@@ -65,7 +65,7 @@ sudo env NO_COLOR=1 naive-update             # 无 ANSI 颜色
 
 ## 工具自更新
 
-菜单启动时和按 `r` 刷新时会检查本仓库最新的 `tool-v*` Release，结果缓存 6 小时。发现新版本后，下载 `naive-update.sh` 和 `SHA256SUMS-tool`，校验 SHA256、脚本内 `VERSION` 与标签一致、`bash -n` 通过后，原子替换 `$TOOL`（默认 `/usr/bin/naive-update`）并重新载入菜单。
+菜单启动时和按 `r` 刷新时会检查本仓库最新的 `tool-v*` Release，结果缓存 5 分钟。发现新版本后，下载 `naive-update.sh` 和 `SHA256SUMS-tool`，校验 SHA256、脚本内 `VERSION` 与标签一致、`bash -n` 通过后，原子替换 `$TOOL`（默认 `/usr/bin/naive-update`）并重新载入菜单。若自动更新被 `NAIVE_AUTO_UPDATE=0` 关闭，或更新失败，菜单底部会显示「工具有新版本 → 选 12 → 3 更新」。
 
 `NAIVE_AUTO_UPDATE=0` 可关闭自动更新；`naive-update self-update` 或菜单 12 → 3 可手动检查并更新。校验只能发现传输损坏和版本错配，不能防止仓库或 Release 本身被篡改；这与下载服务端二进制使用相同的信任边界。
 
