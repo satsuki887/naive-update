@@ -755,8 +755,58 @@ cert_status() {
     say '自动 ACME：由 Caddy 按自身策略续期；请结合服务日志查看签发/续期结果。'
     find "$DATA" -type f -name '*.crt' -print 2>/dev/null || :
 }
+acme_client() { REPLY=${ACME_HOME:-$HOME/.acme.sh}/acme.sh; }
+acme_example() {
+    local kind=${1:-$SERVICE_KIND} client stage deploy domain=example.com
+    client=${ACME_HOME:-$HOME/.acme.sh}/acme.sh
+    stage=${ACME_STAGE:-$STATE/acme-staging}/$domain
+    if [[ $kind == hysteria ]]; then
+        deploy="$TOOL hysteria cert-deploy --cert $stage/cert.crt --key $stage/private.key --domain $domain --yes"
+    else
+        deploy="$TOOL cert deploy --cert $stage/cert.crt --key $stage/private.key --domain $domain --yes"
+    fi
+    say ''
+    say 'ACME 申请示例（替换域名和 API Key 后执行；账户邮箱在安装时设置）：'
+    printf '  export Namesilo_Key=%s\n' "'你的 NameSilo API Key'"
+    printf '  %s --issue --dns dns_namesilo -d %s -d %s\n' "$client" "$domain" "'*.$domain'"
+    say ''
+    say '安装证书并触发部署示例：'
+    printf '  mkdir -p %s\n' "$stage"
+    printf '  %s --install-cert -d %s \\\n' "$client" "$domain"
+    printf '    --key-file %s \\\n' "$stage/private.key"
+    printf '    --fullchain-file %s \\\n' "$stage/cert.crt"
+    printf '    --reloadcmd %s\n' "'$deploy'"
+    say ''
+    say "默认 CA 为 ZeroSSL；如需 Let's Encrypt，在 --issue 命令加 --server letsencrypt。"
+    say '首次部署需在安装向导选择“已有证书”，才会生成固定目录 '"$CERT_ROOT/current"'。'
+}
+acme_install() {
+    local email dir client
+    root
+    need git
+    acme_client; client=$REPLY
+    email=${ACME_EMAIL:-}
+    [[ -n $email ]] || prompt email 'ACME 账户邮箱'
+    [[ $email =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die '邮箱格式无效'
+    if [[ -x $client ]]; then
+        say "acme.sh 已安装：$client"
+        ask '重新安装 / 更新 acme.sh？' || { acme_example; return 0; }
+    else
+        ask "从官方 GitHub 仓库安装 acme.sh 到 ${ACME_HOME:-$HOME/.acme.sh}？会创建续期 cron 并写入 shell 启动文件" || return 0
+    fi
+    tmpdir; dir=$REPLY/acme.sh
+    GIT_TERMINAL_PROMPT=0 git clone --depth 1 https://github.com/acmesh-official/acme.sh.git "$dir" || die '克隆 acme.sh 失败；请检查网络或先运行 deps 安装 git'
+    local -a install=("$dir/acme.sh" --install -m "$email")
+    [[ -z ${ACME_HOME:-} ]] || install+=(--home "$ACME_HOME")
+    "${install[@]}" || die 'acme.sh 安装失败'
+    [[ -x $client ]] || die "安装后未找到 $client"
+    mkdir -p "${ACME_STAGE:-$STATE/acme-staging}"; chmod 700 "${ACME_STAGE:-$STATE/acme-staging}"
+    say "acme.sh 已安装：$client"
+    acme_example
+}
 acme_existing() {
-    local action=$1 domain client=${ACME_HOME:-$HOME/.acme.sh}/acme.sh
+    local action=$1 domain client
+    acme_client; client=$REPLY
     regular "$client"; [[ $(stat -c %u "$client") == 0 ]] || die 'acme.sh 必须由 root 拥有'
     case $action in list) "$client" --list;; renew) prompt domain '已有 acme.sh 证书域名'; valid_domain "$domain" || die '域名无效'; ask '调用已有 acme.sh 执行续期（不强制重签）？' || return; "$client" --renew -d "$domain";; esac
     say '如使用外部证书，请在 Caddyfile 指向 acme.sh 的 install-cert 输出路径，并配置成功后 reload 的续期钩子。'
@@ -907,13 +957,8 @@ cert_activate() {
 cert_hook_info() {
     say "固定完整链：$CERT_ROOT/current/cert.crt"
     say "固定私钥：  $CERT_ROOT/current/private.key"
-    say 'acme.sh 将证书安装到你自己的暂存路径，再把以下命令配置为 reloadcmd（替换路径和域名）：'
-    if [[ ${1:-} == hysteria || $SERVICE_KIND == hysteria ]]; then
-        printf '%q hysteria cert-deploy --cert /你的路径/fullchain.pem --key /你的路径/key.pem --domain example.com --yes\n' "$TOOL"
-    else
-        printf '%q cert deploy --cert /你的路径/fullchain.pem --key /你的路径/key.pem --domain example.com --yes\n' "$TOOL"
-    fi
-    say '不要让 acme.sh 直接写入 current；部署命令先校验并成对切换，失败时恢复旧证书。'
+    say '不要让 acme.sh 直接写入 current；先按下面的 install-cert 写到暂存路径，再由部署命令校验并成对切换，失败时恢复旧证书。'
+    acme_example "${1:-}"
 }
 cert_deploy() {
     local group user id staged
@@ -1080,10 +1125,10 @@ submenu_draw() {
     local kind=$1
     ui_heading '0 返回主菜单 · 操作后留在本子菜单，便于继续管理'
     case $kind in
-        hysteria) ui_section 'Hysteria 2'; ui_hysteria_status; ui_option 1 '首次安装（外部证书，默认 UDP 8443）'; ui_option 2 '更新官方二进制（保留配置）'; ui_option 3 '服务状态'; ui_option 4 '启动'; ui_option 5 '停止'; ui_option 6 '重启'; ui_option 7 '日志'; ui_option 8 '编辑配置副本并应用'; ui_option 9 '证书续期部署说明'; ui_option 10 '备份列表'; ui_option 11 '恢复最近备份'; ui_option 12 '恢复中断事务';;
+        hysteria) ui_section 'Hysteria 2'; ui_hysteria_status; ui_option 1 '首次安装（外部证书，默认 UDP 8443）'; ui_option 2 '更新官方二进制（保留配置）'; ui_option 3 '服务状态'; ui_option 4 '启动'; ui_option 5 '停止'; ui_option 6 '重启'; ui_option 7 '日志'; ui_option 8 '编辑配置副本并应用'; ui_option 9 '证书续期部署 / ACME 示例'; ui_option 10 '备份列表'; ui_option 11 '恢复最近备份'; ui_option 12 '恢复中断事务';;
         config) ui_section 'Caddyfile 管理'; ui_value '配置文件' "$CONFIG"; ui_option 1 '编辑副本，验证通过后应用'; ui_option 2 '验证当前 Caddyfile'; ui_option 3 '重载手工修改的配置'; ui_option 4 '生成独立示例（不加载、不覆盖主配置）';;
         service) ui_section '服务管理'; ui_value '服务单元' "$SERVICE"; ui_option 1 '查看详细状态'; ui_option 2 '启动'; ui_option 3 '停止'; ui_option 4 '重启'; ui_option 5 '启用开机启动'; ui_option 6 '禁用开机启动';;
-        cert) ui_section '证书与 ACME'; ui_option 1 '证书状态 / 有效期'; ui_option 2 '验证配置并重载证书'; ui_option 3 '导入证书（输出 tls 行，由你手工编辑）'; ui_option 4 '列出已有 acme.sh 证书'; ui_option 5 '调用已有 acme.sh 续期'; ui_option 6 '固定证书目录 / 续期钩子说明';;
+        cert) ui_section '证书与 ACME'; ui_option 1 '证书状态 / 有效期'; ui_option 2 '验证配置并重载证书'; ui_option 3 '导入证书（输出 tls 行，由你手工编辑）'; ui_option 4 '列出已有 acme.sh 证书'; ui_option 5 '调用已有 acme.sh 续期'; ui_option 6 '固定证书目录 / 续期钩子说明'; ui_option 7 '安装 acme.sh（显示 NameSilo / install-cert 示例）'; ui_option 8 '查看 ACME 申请与部署示例';;
         warp) ui_section 'WARP 与出口检测'; ui_option 1 '查看连接状态和设置'; ui_option 2 '从 Cloudflare 官方源安装'; ui_option 3 '连接本地代理模式'; ui_option 4 '断开 WARP'; ui_option 5 '检测直连出口'; ui_option 6 '检测本地 SOCKS5 出口';;
         bbr) ui_section 'BBR 与网络队列'; bbr_status 2>/dev/null || ui_note '当前系统无法读取 sysctl'; ui_option 1 '刷新当前参数'; ui_option 2 '启用 BBR + FQ'; ui_option 3 '切换 cubic + fq_codel'; ui_option 4 '恢复某次修改前的参数'; ui_note '只使用当前内核；修改独立 sysctl 文件，不安装第三方内核';;
         backup) ui_section '备份与恢复'; [[ ! -f $STATE/pending.json ]] || printf '  %b检测到未完成事务，请先选择 4 恢复%b\n' "$C_BAD" "$C_RESET"; ui_option 1 '列出备份'; ui_option 2 '恢复最近一次操作前状态'; ui_option 3 '指定备份恢复'; ui_option 4 '恢复中断事务';;
@@ -1101,7 +1146,7 @@ submenu() {
             hysteria:1) run_menu_command hysteria install;; hysteria:2) run_menu_command hysteria update;; hysteria:3) run_menu_command hysteria status;; hysteria:4) run_menu_command hysteria start;; hysteria:5) run_menu_command hysteria stop;; hysteria:6) run_menu_command hysteria restart;; hysteria:7) run_menu_command hysteria logs;; hysteria:8) run_menu_command hysteria edit;; hysteria:9) run_menu_command hysteria cert-hook;; hysteria:10) run_menu_command hysteria backups;; hysteria:11) run_menu_command hysteria rollback;; hysteria:12) run_menu_command hysteria recover;;
             config:1) run_menu_command config edit;; config:2) run_menu_command config validate;; config:3) run_menu_command config reload;; config:4) run_menu_command config examples;;
             service:1) run_menu_command service status;; service:2) run_menu_command service start;; service:3) run_menu_command service stop;; service:4) run_menu_command service restart;; service:5) run_menu_command service enable;; service:6) run_menu_command service disable;;
-            cert:1) run_menu_command cert status;; cert:2) run_menu_command cert reload;; cert:3) run_menu_command cert import;; cert:4) run_menu_command cert acme-list;; cert:5) run_menu_command cert acme-renew;; cert:6) run_menu_command cert hook;;
+            cert:1) run_menu_command cert status;; cert:2) run_menu_command cert reload;; cert:3) run_menu_command cert import;; cert:4) run_menu_command cert acme-list;; cert:5) run_menu_command cert acme-renew;; cert:6) run_menu_command cert hook;; cert:7) run_menu_command cert acme-install;; cert:8) run_menu_command cert acme-example;;
             warp:1) run_menu_command warp status;; warp:2) run_menu_command warp install;; warp:3) run_menu_command warp connect;; warp:4) run_menu_command warp disconnect;; warp:5) run_menu_command network-check;; warp:6) prompt port '  SOCKS5 端口' 40000; run_menu_command network-check "$port";;
             bbr:1) continue;; bbr:2) run_menu_command bbr enable;; bbr:3) run_menu_command bbr disable;; bbr:4) find "$STATE/backups" -name bbr.json -print 2>/dev/null || :; prompt id '  备份目录 ID'; [[ -z $id ]] || run_menu_command rollback "$id";;
             backup:1) run_menu_command backups;; backup:2) run_menu_command rollback;; backup:3) prompt id '  备份 ID'; [[ -z $id ]] || run_menu_command rollback "$id";; backup:4) run_menu_command recover;;
@@ -1161,7 +1206,7 @@ install --build DIR      安装已有构建，不重写 Caddyfile
 update --source download|build   获取新内核并安装
 config edit|validate|reload|examples
 service status|start|stop|restart|enable|disable
-cert status|reload|import|deploy|hook|acme-list|acme-renew
+cert status|reload|import|deploy|hook|acme-install|acme-example|acme-list|acme-renew
 hysteria install|update|status|start|stop|restart|logs|edit|cert-deploy|cert-hook|backups|rollback|recover
 tune status|udp          UDP 缓冲区上限，修改前备份，可用 rollback 恢复
 share|logs|doctor|check|backups|rollback [ID]|recover
@@ -1223,7 +1268,7 @@ main() {
         update) ui_phase "获取目标 $RELEASE（$source）；下载或编译阶段不会重启服务"; case $source in download) fetch_build;; build) build_source;; *) die 'source 必须为 download 或 build';; esac; install_binary "$OUTPUT";;
         config) case $sub in edit) edit_config;; validate) snapshot config; id=$REPLY; validate_config "$BIN" "$CONFIG" "$STATE/backups/$id/validate.log"; say '配置验证通过';; reload) reload_config;; examples) examples; say "示例已写入 $(dirname "$CONFIG")/examples；未自动加载";; *) die '未知 config 操作';; esac;;
         service) case $sub in status) systemctl status "$SERVICE" --no-pager;; start|restart) ask "$sub $SERVICE？" || return; systemctl "$sub" "$SERVICE"; health "$(digest "$BIN")";; stop|enable|disable) ask "$sub $SERVICE？" || return; systemctl "$sub" "$SERVICE";; *) die '未知 service 操作';; esac;;
-        cert) case $sub in status) cert_status;; reload) reload_config;; import) cert_import;; deploy) cert_deploy;; hook) cert_hook_info;; acme-list) acme_existing list;; acme-renew) acme_existing renew;; *) die '未知 cert 操作';; esac;;
+        cert) case $sub in status) cert_status;; reload) reload_config;; import) cert_import;; deploy) cert_deploy;; hook) cert_hook_info;; acme-install) acme_install;; acme-example) acme_example;; acme-list) acme_existing list;; acme-renew) acme_existing renew;; *) die '未知 cert 操作';; esac;;
         bbr) case $sub in status) bbr_status;; enable) bbr_set bbr fq;; disable) bbr_set cubic fq_codel;; *) die '未知 bbr 操作';; esac;;
         warp) case $sub in status) need warp-cli; warp-cli status; warp-cli settings;; install) warp_install;; connect) warp_connect;; disconnect) need warp-cli; ask '断开 WARP？' || return; warp-cli disconnect;; *) die '未知 warp 操作';; esac;;
         network-check) network_check "$network_port";; share) share;; logs) journalctl -u "$SERVICE" --no-pager -n 100;;

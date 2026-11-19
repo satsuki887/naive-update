@@ -2,7 +2,7 @@
 
 独立的交互式 **Bash 运维工具**：安装与更新 Naive / Hysteria 2、管理服务和外部证书、BBR/FQ、UDP 缓冲区及 WARP。运行时只需一个 `naive-update.sh`，无需 Python 或其他配套源码文件。
 
-新增入口：**15 Hysteria 2 管理**、**16 UDP 缓冲区优化**。ACME 由你自行安装配置，新安装默认使用已有证书，并提供固定证书目录及续期部署钩子。详见 [Hysteria、证书与优化指南](docs/hysteria-and-certificates.md) 和 [上线前审视 / CI 故障证据](docs/readiness-review.md)。
+新增入口：**15 Hysteria 2 管理**、**16 UDP 缓冲区优化**。菜单 9 可直接安装 acme.sh，并给出 NameSilo DNS-01 申请和 install-cert 部署示例；新安装默认使用已有证书，并提供固定证书目录及续期部署钩子。详见 [Hysteria、证书与优化指南](docs/hysteria-and-certificates.md) 和 [上线前审视 / CI 故障证据](docs/readiness-review.md)。
 
 本工具由第三方维护，服务端使用 Naive 官方 `klzgrad/forwardproxy` 源码及其 Caddy 版本和补丁。GitHub Actions 定时编译 Linux amd64 安装包。没有脚本自更新，也不使用原博主的脚本或二进制。
 
@@ -37,7 +37,7 @@ sudo naive-update
 | 6 | CI 包升级、本地源码编译升级、安装已有构建 |
 | 7 | 分享链接、Naive 客户端 JSON、可选终端二维码 |
 | 8 | systemd 日志 |
-| 9 | 证书状态、重载、导入、已有 acme.sh 的列表/续期 |
+| 9 | 证书状态、重载、导入、安装 acme.sh、NameSilo 申请与 install-cert 示例、已有证书的列表/续期 |
 | 10 | Cloudflare 官方 WARP 安装、状态、本地代理连接/断开、出口可达性检测 |
 | 11 | BBR + FQ、cubic + fq_codel、从备份恢复原网络参数 |
 | 12 | 备份与回滚、中断事务恢复 |
@@ -70,7 +70,7 @@ sudo env NO_COLOR=1 naive-update             # 无 ANSI 颜色
 
 准备域名，先把 A/AAAA 记录指向这台服务器。下载单文件，打开菜单 1。选择使用本仓库 CI 包或按官方源码本地编译，然后填写域名、监听端口、用户名和密码。
 
-证书默认使用你已配置的 ACME 所签发的完整链证书和无口令私钥，并提供续期部署命令；也可选择 **Caddy 自带 ACME 自动申请与续期**。自动 ACME 需要域名解析正确，公网 80 或 443 能完成挑战。外部证书会检查有效期、域名和公私钥匹配，复制到服务可读的专用目录。
+证书默认使用你已配置的 ACME 所签发的完整链证书和无口令私钥，并提供续期部署命令；也可选择 **Caddy 自带 ACME 自动申请与续期**。菜单 9 可从官方仓库安装 acme.sh，并显示 NameSilo DNS-01 申请与 install-cert 部署示例。自动 ACME 需要域名解析正确，公网 80 或 443 能完成挑战。外部证书会检查有效期、域名和公私钥匹配，复制到服务可读的专用目录。
 
 全新安装使用独立 `naive-caddy` 用户和用户组，以 `CAP_NET_BIND_SERVICE` 绑定低端口，启用 systemd `NoNewPrivileges`、`PrivateTmp`、`ProtectHome` 等设置。数据放在 `/var/lib/naive-caddy`；管理状态及备份放在 root 私有的 `/var/lib/naive-update`。
 
@@ -164,7 +164,7 @@ sudo naive-update recover --yes           # 断电/SIGKILL 等留下 pending.jso
 
 - Caddy 自动 ACME 按自身策略续期，不定时删除证书强制重签。`cert status` 查看外部证书及服务数据，`cert reload` 验证后重载。
 - `cert import` 复制和验证证书，输出可加入 Caddyfile 的 tls 行；按你的习惯由你编辑文件。
-- 已安装的 root 自有 acme.sh 可通过菜单列出/续期；不再下载旧博客的 ACME 包装脚本。外部证书由你配置 acme.sh 的 install-cert 目标路径与成功 reload 钩子。
+- 菜单 9 可从官方仓库安装 acme.sh，列出/续期已有证书，并显示 NameSilo DNS-01 申请与 install-cert 部署示例。外部证书由你配置 acme.sh 的 install-cert 目标路径与成功 reload 钩子。
 - WARP 使用 Cloudflare 官方签名仓库。仅在所装客户端支持 CLI proxy 模式时连接本地代理，并使用 MASQUE；不自动切换整机默认路由。Naive 需要使用该出口时，可手工添加示例中的 `upstream socks5://127.0.0.1:40000`。
 - WARP 发行版/架构支持和模式以 Cloudflare 当前客户端为准，受管理的 Zero Trust 客户端可能禁止本地模式修改。RPM 依赖可能需要 EPEL。
 - 出口检查显示 IP/地区、WARP 状态、ChatGPT/Netflix HTTP 可达性；HTTP 403 与反爬有关，不能简单当作地区封锁或播放授权结论。

@@ -1,6 +1,6 @@
 # Hysteria、外部证书和系统优化
 
-建议顺序：安装依赖 → 自行配置 ACME → 安装 Naive / Hysteria → 配置续期钩子 → 按需启用 BBR/FQ 和 UDP 优化。
+建议顺序：安装依赖 → 安装 ACME 客户端（菜单 9 可代装）→ 安装 Naive / Hysteria → 配置续期钩子 → 按需启用 BBR/FQ 和 UDP 优化。
 
 ## Hysteria 2
 
@@ -22,6 +22,31 @@ sudo naive-update hysteria recover
 Hysteria 备份独立存放在 `/var/lib/naive-update/hysteria`；菜单 12 属于 Naive/系统变更，Hysteria 使用菜单 15 内的恢复操作。可用 `HYSTERIA_BIN/CONFIG/SERVICE/UNIT/STATE/USER/CERT_ROOT` 环境变量指定自定义部署，恢复和续期时须保持一致。`--release app/v2.x.y` 可指定官方稳定标签。
 
 客户端使用安装时填写的域名和端口，密码保存在配置的 `auth.password`，默认不打印到日志；已有复杂 YAML 不会被自动重写。首次生成的是最小 TLS + 密码配置，伪装、ACL、端口跳跃等通过配置编辑按需添加。
+
+## 安装 acme.sh 与 NameSilo 示例
+
+菜单 9 → 7（或 `naive-update cert acme-install`）会从官方 GitHub 仓库克隆并安装 acme.sh，创建续期 cron，并写入 shell 启动文件。已安装时可以选择重新安装/更新，或直接查看示例。邮箱可用 `ACME_EMAIL` 环境变量提供，否则交互询问。
+
+安装完成后会打印两组可复制命令。NameSilo 的 API Key 变量名固定为 `Namesilo_Key`（大小写敏感）：
+
+```bash
+export Namesilo_Key='你的 NameSilo API Key'
+/root/.acme.sh/acme.sh --issue --dns dns_namesilo -d example.com -d '*.example.com'
+```
+
+续期时用 `--install-cert` 把证书写到暂存路径，再用 reloadcmd 调用本工具。Naive 示例：
+
+```bash
+mkdir -p /var/lib/naive-update/acme-staging/example.com
+/root/.acme.sh/acme.sh --install-cert -d example.com \
+  --key-file       /var/lib/naive-update/acme-staging/example.com/private.key \
+  --fullchain-file /var/lib/naive-update/acme-staging/example.com/cert.crt \
+  --reloadcmd      '/usr/bin/naive-update cert deploy --cert /var/lib/naive-update/acme-staging/example.com/cert.crt --key /var/lib/naive-update/acme-staging/example.com/private.key --domain example.com --yes'
+```
+
+Hysteria 将 reloadcmd 换成 `naive-update hysteria cert-deploy ...`，暂存目录默认在 `/var/lib/naive-update/hysteria/acme-staging`。`naive-update cert acme-example` 或 `hysteria cert-hook` 会按当前服务打印对应版本。
+
+默认 CA 为 ZeroSSL；如需 Let's Encrypt，在 `--issue` 命令加 `--server letsencrypt`。DNS-01 不依赖 80/443 端口，但需要 NameSilo API Key 的 DNS 编辑权限。首次部署必须使用“已有证书”模式，才会生成 `managed-certs/current`；否则 `cert deploy` 会拒绝执行。
 
 ## 固定证书路径与续期
 

@@ -88,3 +88,13 @@ chmod +x "$TEST_WORK/mock-bin/gh"
 PATH="$TEST_WORK/mock-bin:$PATH" REQUESTED_RELEASE='' GITHUB_OUTPUT="$TEST_WORK/discover" bash "$(dirname "$SCRIPT")/ci/prepare-release.sh"
 grep -q '^needed=false$' "$TEST_WORK/discover"
 echo 'ok - empty scheduled/manual release uses authenticated gh discovery and skips complete releases'
+TOOL=/usr/bin/naive-update
+out=$(acme_example)
+grep -q 'Namesilo_Key' <<<"$out"
+grep -q 'dns_namesilo' <<<"$out"
+grep -q -- '--install-cert' <<<"$out"
+grep -q 'cert deploy' <<<"$out"
+[[ $out != *'hysteria cert-deploy'* ]]
+out=$(acme_example hysteria)
+grep -q 'hysteria cert-deploy' <<<"$out"
+echo 'ok - ACME examples render NameSilo issuance and service-specific deployment'
