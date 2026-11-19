@@ -107,7 +107,7 @@ NO_COLOR=1 NAIVE_COLOR=always ui_init
 [[ -z $C_ACCENT ]] || fail 'NO_COLOR ignored'
 ok 'NO_COLOR keeps output readable without ANSI escapes'
 menu_draw >"$work/home"
-grep -q 'Naive' "$work/home"; grep -q 'Hysteria' "$work/home"; grep -q 'BBR' "$work/home"
+grep -q 'Naive' "$work/home"; grep -q 'Hysteria' "$work/home"; grep -q 'BBR' "$work/home"; grep -q 's 状态' "$work/home"
 ok 'compact dashboard includes status and version summaries'
 TOOL_LATEST=tool-v9.9.9
 menu_draw >"$work/home-update"

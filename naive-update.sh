@@ -5,7 +5,7 @@
 # shellcheck disable=SC2016,SC2030,SC2031
 set -Eeuo pipefail
 umask 077
-VERSION=2.3.3
+VERSION=2.3.4
 REPO=satsuki887/naive-update
 UPSTREAM=klzgrad/forwardproxy
 BIN=${NAIVE_BIN:-/usr/bin/caddy}
@@ -1326,7 +1326,8 @@ menu_draw() {
         printf '  %b工具有新版本 %s → 选 12 → 3 更新%b\n' "$C_WARN" "${TOOL_LATEST#tool-}" "$C_RESET"
     fi
     ui_line
-    ui_note 'r 刷新   0 退出   子菜单 0 返回'
+    ui_note 's 状态   t 重启   l 日志   c 证书   e 配置'
+    ui_note 'u 更新   h Hysteria   b 备份   d 诊断   r 刷新   0 退出'
 }
 submenu_draw() {
     local kind=$1
@@ -1393,9 +1394,18 @@ menu() {
     run_menu_command install-tool --yes
     tool_auto_update
     while :; do
-        menu_draw; read -r -p '  请选择 [r 刷新 / 0 退出]：' choice || break
+        menu_draw; read -r -p '  请选择 [编号 / 快捷键 / 0 退出]：' choice || break
         case $choice in
             0|q) break;; r|R) UI_LOCAL_SIG='' UI_CONFIG_SIG=''; tool_auto_update 1; ui_versions 1; continue;;
+            s|S) run_menu_command service status; ui_pause;;
+            t|T) run_menu_command service restart; ui_pause;;
+            l|L) run_menu_command logs; ui_pause;;
+            c|C) run_menu_command cert status; ui_pause;;
+            e|E) run_menu_command config edit; ui_pause;;
+            u|U) upgrade_menu;;
+            h|H) submenu hysteria;;
+            b|B) run_menu_command backups; ui_pause;;
+            d|D) run_menu_command doctor; ui_pause;;
             3) submenu config;; 4) submenu service;; 5) upgrade_menu;; 8) submenu cert;; 9) submenu bbr;; 10) submenu warp;; 11) submenu backup;; 12) submenu shortcut;; 13) submenu hysteria;;
             1) run_menu_command deploy; ui_pause;; 2) run_menu_command uninstall; ui_pause;; 6) run_menu_command share; ui_pause;; 7) run_menu_command logs; ui_pause;;
             *) say '  编号无效'; ui_pause;;
