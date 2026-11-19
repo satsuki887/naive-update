@@ -5,7 +5,7 @@
 # shellcheck disable=SC2016,SC2030,SC2031
 set -Eeuo pipefail
 umask 077
-VERSION=2.3.1
+VERSION=2.3.2
 REPO=satsuki887/naive-update
 UPSTREAM=klzgrad/forwardproxy
 BIN=${NAIVE_BIN:-/usr/bin/caddy}
@@ -23,7 +23,7 @@ TEMPS=()
 UI_CACHE='' UI_LOCAL_SIG='' UI_CONFIG_SIG='' UI_JSON=''
 UI_CADDY='' UI_COMMIT='' UI_INSTALLED_TAG='' UI_ORIGIN='' UI_RECEIPT_TAG=''
 UI_DOMAIN='' UI_PORTS='' UI_PROTOCOLS='' UI_CONFIG_STATUS=''
-UI_OFFICIAL='' UI_OWN='' UI_OFFICIAL_SHA='' UI_CLIENT='' UI_CADDY_LATEST='' UI_HYSTERIA='' UI_CLIENT_SIG='' UI_CLIENT_INSTALLED='' UI_PACKAGE_READY=0
+UI_OFFICIAL='' UI_OWN='' UI_OFFICIAL_SHA='' UI_CLIENT='' UI_CADDY_LATEST='' UI_HYSTERIA='' UI_PACKAGE_READY=0
 C_RESET='' C_TITLE='' C_ACCENT='' C_GOOD='' C_WARN='' C_BAD='' C_MUTED=''
 ui_init() {
     C_RESET='' C_TITLE='' C_ACCENT='' C_GOOD='' C_WARN='' C_BAD='' C_MUTED=''
@@ -128,46 +128,6 @@ ui_naive_summary() {
         else REPLY="$UI_INSTALLED_TAG"; fi
     elif [[ -n ${UI_CADDY:-} ]]; then REPLY="$UI_CADDY"
     else REPLY='未安装'; fi
-}
-ui_client_summary() {
-    local installed='' latest=${UI_CLIENT#v} bin sig file svc info re='1[0-9]{2}\.[0-9]+\.[0-9]+\.[0-9]+-[0-9]+'
-    for bin in "$(command -v naive 2>/dev/null)" "$(command -v naiveproxy 2>/dev/null)" /usr/local/bin/naive /usr/local/bin/naiveproxy /usr/bin/naive /usr/bin/naiveproxy /usr/local/naive/naive /opt/naive/naive /root/naive/naive; do
-        [[ -n $bin && -x $bin ]] || continue
-        sig=$(stat -c '%i:%s:%Y' "$bin" 2>/dev/null) || sig=$bin
-        sig=$bin:$sig
-        if [[ $sig == "$UI_CLIENT_SIG" ]]; then installed=$UI_CLIENT_INSTALLED; break; fi
-        installed=$(timeout 2 "$bin" --version 2>&1 | grep -oE "$re" | head -n1) || installed=''
-        [[ -n $installed ]] || installed=$(timeout 2 "$bin" -version 2>&1 | grep -oE "$re" | head -n1) || installed=''
-        if [[ -n $installed ]]; then UI_CLIENT_SIG=$sig; UI_CLIENT_INSTALLED=$installed; break; fi
-    done
-    if [[ -z $installed ]] && command -v systemctl >/dev/null; then
-        for svc in naiveproxy.service naive.service naive-server.service; do
-            info=$(timeout 2 systemctl show "$svc" -p ExecStart --value 2>/dev/null) || continue
-            bin=$(grep -oE 'path=[^ ;]+' <<<"$info" | head -n1) || bin=''
-            bin=${bin#path=}
-            [[ -n $bin && -x $bin ]] || continue
-            installed=$(timeout 2 "$bin" --version 2>&1 | grep -oE "$re" | head -n1) || installed=''
-            [[ -n $installed ]] || installed=$(timeout 2 "$bin" -version 2>&1 | grep -oE "$re" | head -n1) || installed=''
-            [[ -n $installed ]] && break
-        done
-    fi
-    if [[ -z $installed ]]; then
-        for file in /usr/local/etc/naive/version /usr/local/etc/naive/naive.version /etc/naive/version /etc/naive/naive.version /usr/local/naive/version /root/naive/version /usr/local/bin/naive.version; do
-            [[ -f $file ]] || continue
-            installed=$(grep -oE "$re" "$file" 2>/dev/null | head -n1) || installed=''
-            [[ -n $installed ]] && break
-        done
-    fi
-    if [[ -n $installed ]]; then
-        if [[ -z $latest ]]; then REPLY="v$installed"
-        elif version_gt "$latest" "$installed"; then REPLY="v$installed ${C_WARN}↑ v$latest${C_RESET}"
-        elif [[ $latest == "$installed" ]]; then REPLY="v$installed ${C_GOOD}✓${C_RESET}"
-        else REPLY="v$installed"; fi
-    elif [[ -n $latest ]]; then
-        REPLY="${C_MUTED}官方最新 v$latest（未检测到本机客户端）${C_RESET}"
-    else
-        REPLY='未检测到'
-    fi
 }
 ui_config_info() {
     local sig
@@ -1337,7 +1297,6 @@ ui_hysteria_status() {
 }
 run_menu_command() { local result; set +e; bash "$SELF" "$@"; result=$?; set -e; [[ $result == 0 ]] || printf '  %b操作未完成（退出码 %s），请查看上方原因%b\n' "$C_BAD" "$result" "$C_RESET"; }
 menu_draw() {
-    local server
     ui_versions 0
     ui_local_version
     ui_home_heading
@@ -1357,9 +1316,7 @@ menu_draw() {
     ui_option 12 '快捷命令 / 工具更新 / 诊断'
     ui_option 13 '管理 Hysteria 2 服务'
     ui_line
-    ui_naive_summary; server=$REPLY
-    ui_client_summary
-    ui_kv 'Naive' "服务端 $server    客户端 $REPLY"
+    ui_naive_summary; ui_kv 'Naive' "服务端 $REPLY"
     ui_hysteria_summary; ui_kv 'Hysteria' "$REPLY"
     ui_system_rows
     ui_recommendation

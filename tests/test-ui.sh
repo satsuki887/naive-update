@@ -43,10 +43,6 @@ cat >"$work/bin/hysteria" <<'EOF'
 #!/usr/bin/env bash
 [[ $1 == version ]] && printf 'Version:\tv2.14.0\n'
 EOF
-cat >"$work/bin/naive" <<'EOF'
-#!/usr/bin/env bash
-[[ $1 == --version ]] && printf 'Naiveproxy v154.0.8037.49-4\n'
-EOF
 cat >"$work/bin/sysctl" <<'EOF'
 #!/usr/bin/env bash
 case $2 in net.ipv4.tcp_congestion_control) printf 'bbr\n';; net.core.default_qdisc) printf 'fq\n';; esac
@@ -76,11 +72,7 @@ UI_HYSTERIA=v2.15.0
 ui_hysteria_summary; [[ $REPLY == *'↑ v2.15.0'* ]] || fail 'Hysteria update detection'
 UI_HYSTERIA=v2.14.0
 ui_hysteria_summary; [[ $REPLY == *✓* ]] || fail 'Hysteria latest detection'
-UI_CLIENT=v154.0.8037.49-5
-ui_client_summary; [[ $REPLY == *'v154.0.8037.49-4 ↑ v154.0.8037.49-5'* ]] || fail 'client kernel update detection'
-UI_CLIENT=v154.0.8037.49-4
-ui_client_summary; [[ $REPLY == *✓* ]] || fail 'client kernel latest detection'
-ok 'homepage detects Hysteria and client kernel updates'
+ok 'homepage detects Hysteria updates'
 jq -n --arg sha "$(digest "$BIN")" '{release:"v2.11.7-naive2",sha256:$sha,forwardproxy:{commit:"e747854e7874000000000000000000000000000000"}}' >"$STATE/current-build.json"
 UI_LOCAL_SIG=''; ui_local_version
 [[ $UI_INSTALLED_TAG == v2.11.7-naive2 ]] || fail 'receipt-based version'
