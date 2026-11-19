@@ -4,7 +4,7 @@
 
 新增入口：**15 Hysteria 2 管理**、**16 UDP 缓冲区优化**。菜单 9 可直接安装 acme.sh，并给出 NameSilo DNS-01 申请和 install-cert 部署示例；新安装默认使用已有证书，并提供固定证书目录及续期部署钩子。详见 [Hysteria、证书与优化指南](docs/hysteria-and-certificates.md) 和 [上线前审视 / CI 故障证据](docs/readiness-review.md)。
 
-本工具由第三方维护，服务端使用 Naive 官方 `klzgrad/forwardproxy` 源码及其 Caddy 版本和补丁。GitHub Actions 定时编译 Linux amd64 安装包。没有脚本自更新，也不使用原博主的脚本或二进制。
+本工具由第三方维护，服务端使用 Naive 官方 `klzgrad/forwardproxy` 源码及其 Caddy 版本和补丁。GitHub Actions 定时编译 Linux amd64 安装包。工具可从 `tool-v*` Release 校验后自动更新自身，也不使用原博主的脚本或二进制。
 
 ## 获取并运行
 
@@ -21,7 +21,7 @@ sudo bash naive-update.sh
 sudo naive-update
 ```
 
-默认不会覆盖旧 `/usr/bin/na`。菜单 13 可以备份旧脚本后接管 `na` 命令。工具不自动下载自身更新；手工下载新单文件并再次运行即可安装新工具版本。
+默认不会覆盖旧 `/usr/bin/na`。菜单 13 可以备份旧脚本后接管 `na` 命令。工具默认在菜单启动和按 `r` 刷新时检查 `tool-v*` Release，校验 SHA256 和版本后自动更新自身；`NAIVE_AUTO_UPDATE=0` 可关闭，`naive-update self-update` 可手动检查。
 
 基础依赖是常见系统工具：Bash 4.3+、curl、jq、OpenSSL、GNU tar/coreutils、util-linux（flock/setpriv）、systemd。本地编译另需 Git、Go；二维码需要可选的 qrencode。菜单会检查依赖，可通过系统源安装。Go 不足时可安装 go.dev 提供、经过摘要校验的独立工具链，不覆盖系统 Go，也不写旧 Go 软件源。
 
@@ -41,7 +41,7 @@ sudo naive-update
 | 10 | Cloudflare 官方 WARP 安装、状态、本地代理连接/断开、出口可达性检测 |
 | 11 | BBR + FQ、cubic + fq_codel、从备份恢复原网络参数 |
 | 12 | 备份与回滚、中断事务恢复 |
-| 13 | 安装快捷命令、可选接管 na |
+| 13 | 安装快捷命令、工具自更新、可选接管 na |
 | 14 | 系统诊断、安装依赖 |
 | 15 | Hysteria 2 安装、更新、服务、配置、证书与恢复 |
 | 16 | UDP 缓冲区上限优化（保留原值，可回滚） |
@@ -65,6 +65,12 @@ sudo env NO_COLOR=1 naive-update             # 无 ANSI 颜色
 ```
 
 更新页先列出“当前安装 / 官方发布 / 本仓库构建”，选择后固定该目标标签。下载/编译阶段显示进度且不重启服务；构建完成后再列出实际目标 Caddy、插件提交与 SHA256，由你确认备份和切换。即使 Caddy 版本号相同，插件版本差异仍会显示；相同二进制会提示通常不必重复安装。
+
+## 工具自更新
+
+菜单启动时和按 `r` 刷新时会检查本仓库最新的 `tool-v*` Release，结果缓存 6 小时。发现新版本后，下载 `naive-update.sh` 和 `SHA256SUMS-tool`，校验 SHA256、脚本内 `VERSION` 与标签一致、`bash -n` 通过后，原子替换 `$TOOL`（默认 `/usr/bin/naive-update`）并重新载入菜单。
+
+`NAIVE_AUTO_UPDATE=0` 可关闭自动更新；`naive-update self-update` 或菜单 13 → 3 可手动检查并更新。校验只能发现传输损坏和版本错配，不能防止仓库或 Release 本身被篡改；这与下载服务端二进制使用相同的信任边界。
 
 ## 新服务器安装
 

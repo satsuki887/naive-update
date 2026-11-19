@@ -5,7 +5,7 @@
 # shellcheck disable=SC2016,SC2030,SC2031
 set -Eeuo pipefail
 umask 077
-VERSION=2.1.0
+VERSION=2.2.0
 REPO=satsuki887/naive-update
 UPSTREAM=klzgrad/forwardproxy
 BIN=${NAIVE_BIN:-/usr/bin/caddy}
@@ -257,6 +257,7 @@ digest() { sha256sum -- "$1" | awk '{print $1}'; }
 now() { date -u +%Y%m%dT%H%M%SZ; }
 tmpdir() { REPLY=$(mktemp -d); TEMPS+=("$REPLY"); }
 valid_tag() { [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+-naive[a-zA-Z0-9._-]*$ ]]; }
+version_gt() { [[ $1 != "$2" && $(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1) == "$1" ]]; }
 regular() { [[ -f $1 && ! -L $1 ]] || die "要求普通文件，拒绝符号链接：$1"; }
 mutable() { local flags; if command -v lsattr >/dev/null; then flags=$(lsattr -d -- "$1" 2>/dev/null | awk '{print $1}') || return 0; [[ $flags != *i* && $flags != *a* ]] || die "文件 immutable/append-only：$1"; fi; }
 download_url() { local -a progress=(--silent --show-error); [[ ! -t 2 || ${NAIVE_PROGRESS:-1} == 0 ]] || progress=(--progress-bar --show-error); curl -fL "${progress[@]}" --retry 3 --connect-timeout 15 --max-time 300 --proto '=https' --proto-redir '=https' --max-filesize 157286400 "$1" -o "$2"; }
@@ -657,6 +658,74 @@ install_tool() {
         copy_atomic "$SELF" "$TOOL"; chmod 755 "$TOOL"
     fi
     say "快捷命令：$TOOL（输入 naive-update 打开菜单）"
+}
+tool_latest_tag() {
+    local releases tag
+    releases=$(api "repos/$REPO/releases?per_page=100") || return 1
+    tag=$(jq -r '[.[] | select(.draft == false and .prerelease == false and (.tag_name | test("^tool-v[0-9]+\\.[0-9]+\\.[0-9]+$")))] | max_by(.tag_name | sub("^tool-v"; "") | split(".") | map(tonumber)) | .tag_name // empty' <<<"$releases") || return 1
+    [[ -n $tag ]] || return 1
+    REPLY=$tag
+}
+tool_check_update() {
+    local force=${1:-0} checked latest now
+    ui_cache_init
+    now=$(date +%s)
+    if [[ $force != 1 && -f $UI_CACHE/tool-checked && -f $UI_CACHE/tool-latest ]]; then
+        read -r checked <"$UI_CACHE/tool-checked" || checked=0
+        [[ $checked =~ ^[0-9]+$ ]] || checked=0
+        if ((now - checked < 21600)); then
+            read -r latest <"$UI_CACHE/tool-latest" || latest=''
+            [[ -n $latest ]] && { REPLY=$latest; return 0; }
+        fi
+    fi
+    tool_latest_tag || return 1
+    printf '%s\n' "$REPLY" >"$UI_CACHE/tool-latest"
+    printf '%s\n' "$now" >"$UI_CACHE/tool-checked"
+    return 0
+}
+tool_update() {
+    local tag=$1 version work
+    [[ $tag =~ ^tool-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { say '工具版本标签无效' >&2; return 1; }
+    version=${tag#tool-v}
+    root; need curl; need jq; need sha256sum
+    tmpdir; work=$REPLY
+    ui_phase "下载工具 $tag 并校验……"
+    download_url "https://github.com/$REPO/releases/download/$tag/naive-update.sh" "$work/naive-update.sh" || { say '工具下载失败' >&2; return 1; }
+    download_url "https://github.com/$REPO/releases/download/$tag/SHA256SUMS-tool" "$work/SHA256SUMS-tool" || { say '工具校验文件下载失败' >&2; return 1; }
+    (cd "$work" && sha256sum -c SHA256SUMS-tool >/dev/null) || { say '工具 SHA256 校验失败' >&2; return 1; }
+    [[ $(sed -n 's/^VERSION=//p' "$work/naive-update.sh" | head -n1) == "$version" ]] || { say '工具内版本号与标签不一致' >&2; return 1; }
+    grep -q 'NAIVE_SINGLE_FILE=1' "$work/naive-update.sh" || { say '下载内容不是本工具' >&2; return 1; }
+    bash -n "$work/naive-update.sh" || { say '下载脚本语法检查失败' >&2; return 1; }
+    if [[ -L $TOOL || ( -e $TOOL && ! -f $TOOL ) ]]; then say "目标不是普通文件：$TOOL" >&2; return 1; fi
+    if [[ -f $TOOL ]] && ! grep -q 'NAIVE_SINGLE_FILE=1' "$TOOL"; then say "快捷路径被其他程序占用：$TOOL" >&2; return 1; fi
+    if ! ( copy_atomic "$work/naive-update.sh" "$TOOL" && chmod 755 "$TOOL" ); then say '工具安装失败' >&2; return 1; fi
+    say "工具已更新到 v$version：$TOOL"
+    return 0
+}
+tool_self_update() {
+    local tag
+    root; need curl; need jq
+    tool_latest_tag || die '无法获取工具最新版本；请检查网络、GH_TOKEN 权限或 Release'
+    tag=$REPLY
+    if ! version_gt "${tag#tool-v}" "$VERSION"; then say "已是最新版本 v$VERSION"; return 0; fi
+    ask "发现工具新版本 v${tag#tool-v}（当前 v$VERSION），现在更新？" || return 0
+    tool_update "$tag" || return 1
+    say '重新运行 naive-update 使用新版本。'
+}
+tool_auto_update() {
+    local force=${1:-0} latest
+    [[ ${NAIVE_AUTO_UPDATE:-1} == 0 || ${NAIVE_SELF_UPDATED:-0} == 1 ]] && return 0
+    [[ $EUID == 0 ]] || return 0
+    tool_check_update "$force" || return 0
+    latest=${REPLY#tool-v}
+    version_gt "$latest" "$VERSION" || return 0
+    say "发现工具新版本 v$latest（当前 v$VERSION），正在自动更新……"
+    if tool_update "tool-v$latest" && [[ -x $TOOL ]]; then
+        export NAIVE_SELF_UPDATED=1
+        exec "$TOOL"
+    fi
+    say '自动更新失败，继续使用当前版本。' >&2
+    return 0
 }
 install_na_alias() {
     install_tool; ask '接管 /usr/bin/na？旧脚本会备份，服务配置不变' || return 0
@@ -1210,7 +1279,7 @@ submenu_draw() {
         warp) ui_section 'WARP 与出口检测'; ui_option 1 '查看连接状态和设置'; ui_option 2 '从 Cloudflare 官方源安装'; ui_option 3 '连接本地代理模式'; ui_option 4 '断开 WARP'; ui_option 5 '检测直连出口'; ui_option 6 '检测本地 SOCKS5 出口';;
         bbr) ui_section 'BBR 与网络队列'; bbr_status 2>/dev/null || ui_note '当前系统无法读取 sysctl'; ui_option 1 '刷新当前参数'; ui_option 2 '启用 BBR + FQ'; ui_option 3 '切换 cubic + fq_codel'; ui_option 4 '恢复某次修改前的参数'; ui_note '只使用当前内核；修改独立 sysctl 文件，不安装第三方内核';;
         backup) ui_section '备份与恢复'; [[ ! -f $STATE/pending.json ]] || printf '  %b检测到未完成事务，请先选择 4 恢复%b\n' "$C_BAD" "$C_RESET"; ui_option 1 '列出备份'; ui_option 2 '恢复最近一次操作前状态'; ui_option 3 '指定备份恢复'; ui_option 4 '恢复中断事务';;
-        shortcut) ui_section '快捷命令'; ui_value '主命令' "$TOOL"; ui_option 1 '安装 / 更新当前本地快捷命令'; ui_option 2 '备份旧脚本并接管 /usr/bin/na'; ui_note '不从网络自动下载或覆盖管理脚本';;
+        shortcut) ui_section '快捷命令'; ui_value '主命令' "$TOOL"; ui_option 1 '安装 / 更新当前本地快捷命令'; ui_option 2 '备份旧脚本并接管 /usr/bin/na'; ui_option 3 '检查并更新工具自身'; ui_note '默认自动检查 tool-v* Release；NAIVE_AUTO_UPDATE=0 可关闭';;
         doctor) ui_section '系统诊断与依赖'; ui_option 1 '只读诊断'; ui_option 2 '通过系统软件源安装依赖';;
     esac
     ui_line; ui_option 0 '返回主菜单'
@@ -1228,7 +1297,7 @@ submenu() {
             warp:1) run_menu_command warp status;; warp:2) run_menu_command warp install;; warp:3) run_menu_command warp connect;; warp:4) run_menu_command warp disconnect;; warp:5) run_menu_command network-check;; warp:6) prompt port '  SOCKS5 端口' 40000; run_menu_command network-check "$port";;
             bbr:1) continue;; bbr:2) run_menu_command bbr enable;; bbr:3) run_menu_command bbr disable;; bbr:4) find "$STATE/backups" -name bbr.json -print 2>/dev/null || :; prompt id '  备份目录 ID'; [[ -z $id ]] || run_menu_command rollback "$id";;
             backup:1) run_menu_command backups;; backup:2) run_menu_command rollback;; backup:3) prompt id '  备份 ID'; [[ -z $id ]] || run_menu_command rollback "$id";; backup:4) run_menu_command recover;;
-            shortcut:1) run_menu_command install-tool;; shortcut:2) run_menu_command install-na;; doctor:1) run_menu_command doctor;; doctor:2) run_menu_command deps;;
+            shortcut:1) run_menu_command install-tool;; shortcut:2) run_menu_command install-na;; shortcut:3) run_menu_command self-update;; doctor:1) run_menu_command doctor;; doctor:2) run_menu_command deps;;
             *) say '  编号无效，请重新选择';;
         esac
         UI_LOCAL_SIG='' UI_CONFIG_SIG=''; ui_pause
@@ -1263,10 +1332,11 @@ menu() {
     for cmd in jq curl openssl flock setpriv; do command -v "$cmd" >/dev/null || missing=1; done
     if [[ $missing == 1 ]]; then ask '缺少基础依赖，先使用系统源安装？' || return; run_menu_command deps --yes; fi
     run_menu_command install-tool --yes
+    tool_auto_update
     while :; do
         menu_draw; read -r -p '  请选择 [r 刷新 / 0 退出]：' choice || break
         case $choice in
-            0|q) break;; r|R|5) UI_LOCAL_SIG='' UI_CONFIG_SIG=''; ui_versions 1; continue;;
+            0|q) break;; r|R|5) UI_LOCAL_SIG='' UI_CONFIG_SIG=''; tool_auto_update 1; ui_versions 1; continue;;
             3) submenu config;; 4) submenu service;; 6) upgrade_menu;; 9) submenu cert;; 10) submenu warp;; 11) submenu bbr;; 12) submenu backup;; 13) submenu shortcut;; 14) submenu doctor;; 15) submenu hysteria;; 16) run_menu_command tune udp; ui_pause;;
             1) run_menu_command deploy; ui_pause;; 2) run_menu_command uninstall; ui_pause;; 7) run_menu_command share; ui_pause;; 8) run_menu_command logs; ui_pause;;
             *) say '  编号无效'; ui_pause;;
@@ -1288,6 +1358,7 @@ cert status|reload|import|deploy|hook|acme-install|acme-example|acme-list|acme-r
 hysteria install|update|status|start|stop|restart|logs|edit|cert-deploy|cert-hook|backups|rollback|recover
 tune status|udp          UDP 缓冲区上限，修改前备份，可用 rollback 恢复
 share|logs|doctor|check|backups|rollback [ID]|recover
+self-update               从 tool-v* Release 检查并更新当前工具
 dashboard                显示本机、BBR/WARP 与版本对比状态（不进入菜单）
 bbr status|enable|disable
 warp status|install|connect|disconnect
@@ -1329,6 +1400,7 @@ main() {
         menu) if [[ -t 0 ]]; then menu; else menu_draw; usage; fi; return;;
         deps) deps; return;;
         doctor) doctor; return;;
+        self-update) tool_self_update; return;;
         internal-restore) root; [[ -e /proc/self/fd/9 ]] || die '内部恢复缺少事务锁'; restore_snapshot "$backup_id"; return;;
     esac
     need jq; need curl; need openssl

@@ -37,7 +37,8 @@ http://127.0.0.1:18181 {
 }
 EOF
 bash "$SCRIPT" deploy --build "$BUILD" --config-source "$BASE/initial.Caddyfile" --yes
-[[ $("$NAIVE_TOOL" --version) == 2.1.0 ]]
+expected_version=$(sed -n 's/^VERSION=//p' "$SCRIPT" | head -n1)
+[[ $("$NAIVE_TOOL" --version) == "$expected_version" ]]
 [[ $(systemctl show "$NAIVE_SERVICE" -p User --value) == "$NAIVE_USER" ]]
 curl -fsS http://127.0.0.1:18181/ | grep -q ci
 echo 'Fresh install with non-root systemd user and standalone shortcut passed'

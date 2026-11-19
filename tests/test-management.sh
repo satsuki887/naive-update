@@ -118,6 +118,40 @@ valid_masquerade_optional '' && valid_masquerade_optional https://example.com
 valid_username user && ! valid_username 'us:er' && ! valid_username ''
 valid_email a@b.co && ! valid_email bad
 echo 'ok - invalid install input is re-requested, secrets mask input and validators reject bad values'
+version_gt 2.2.0 2.1.0 && ! version_gt 2.1.0 2.2.0 && ! version_gt 2.1.0 2.1.0
+fake_version=9.9.9
+cat >"$TEST_WORK/new-tool" <<EOF
+#!/usr/bin/env bash
+# NAIVE_SINGLE_FILE=1
+VERSION=$fake_version
+EOF
+chmod +x "$TEST_WORK/new-tool"
+printf '%s  naive-update.sh\n' "$(sha256sum "$TEST_WORK/new-tool" | awk '{print $1}')" >"$TEST_WORK/tool-sums"
+api() { printf '[{"tag_name":"tool-v2.1.0","draft":false,"prerelease":false},{"tag_name":"tool-v%s","draft":false,"prerelease":false},{"tag_name":"server-v9.9.9","draft":false,"prerelease":false}]\n' "$fake_version"; }
+download_url() {
+    case $1 in
+        */naive-update.sh) cp "$TEST_WORK/new-tool" "$2";;
+        */SHA256SUMS-tool) cp "$TEST_WORK/tool-sums" "$2";;
+        *) return 1;;
+    esac
+}
+root() { :; }
+tool_latest_tag
+[[ $REPLY == tool-v$fake_version ]]
+TOOL=$TEST_WORK/tool-bin REPO=owner/repo tool_update "$REPLY" >/dev/null
+[[ -x $TEST_WORK/tool-bin ]] && grep -q "VERSION=$fake_version" "$TEST_WORK/tool-bin"
+echo 'ok - tool update picks the highest tool-v release and installs after verification'
+printf '%064d  naive-update.sh\n' 0 >"$TEST_WORK/bad-sums"
+download_url() {
+    case $1 in
+        */naive-update.sh) cp "$TEST_WORK/new-tool" "$2";;
+        */SHA256SUMS-tool) cp "$TEST_WORK/bad-sums" "$2";;
+        *) return 1;;
+    esac
+}
+if (TOOL=$TEST_WORK/tool-bin-bad REPO=owner/repo tool_update tool-v9.9.9) >/dev/null 2>&1; then exit 1; fi
+[[ ! -e $TEST_WORK/tool-bin-bad ]]
+echo 'ok - tool update rejects a mismatched checksum'
 # Regression: acme.sh's installer must run from its clone directory.
 acme_home=$TEST_WORK/acme-home
 root() { :; }
