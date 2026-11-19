@@ -74,7 +74,7 @@ sudo env NO_COLOR=1 naive-update             # 无 ANSI 颜色
 
 全新安装使用独立 `naive-caddy` 用户和用户组，以 `CAP_NET_BIND_SERVICE` 绑定低端口，启用 systemd `NoNewPrivileges`、`PrivateTmp`、`ProtectHome` 等设置。数据放在 `/var/lib/naive-caddy`；管理状态及备份放在 root 私有的 `/var/lib/naive-update`。
 
-部署向导不会关闭防火墙或替你操作云安全组。按实际端口放行 TCP；默认 Caddy 支持 HTTP/3，需要时放行相同 UDP 端口。自动 HTTP 重定向和 HTTP ACME 挑战通常需要 TCP 80。
+部署向导不会关闭防火墙或替你操作云安全组。按实际端口放行 TCP；默认 Caddyfile 只启用 h1/h2，需要 HTTP/3 时在 `servers` 块加入 h3 并放行相同 UDP 端口。自动 HTTP 重定向和 HTTP ACME 挑战通常需要 TCP 80。
 
 ### 默认 Caddyfile
 
@@ -82,6 +82,9 @@ sudo env NO_COLOR=1 naive-update             # 无 ANSI 颜色
 
 ```caddyfile
 {
+    servers {
+        protocols h1 h2
+    }
     order forward_proxy before file_server
     log {
         exclude http.log.error
@@ -101,11 +104,11 @@ sudo env NO_COLOR=1 naive-update             # 无 ANSI 颜色
 }
 ```
 
-向导填写 ACME 邮箱时加 `tls 邮箱`；使用外部证书时加 `tls 证书 私钥`。默认不限制 h1/h2/h3、不拦截 IP、不额外放行私网目标，也不使用旧脚本的随机 HTTP 端口或冗余 HTTPS 上游 Host 覆盖。
+向导填写 ACME 邮箱时加 `tls 邮箱`；使用外部证书时加 `tls 证书 私钥`。默认只启用 h1/h2、不拦截 IP、不额外放行私网目标，也不使用旧脚本的随机 HTTP 端口或冗余 HTTPS 上游 Host 覆盖。
 
 选择 HTTPS 反代伪装时，使用显式 `route` 依序运行 forward_proxy 和 reverse_proxy。Caddy 2.11+ 会自动处理 HTTPS 上游 Host，不重新添加旧模板的 `header_up Host {upstream_hostport}`。
 
-主配置在 **`/etc/caddy/Caddyfile`**。示例在 **`/etc/caddy/examples/`**，包括标准模板和可选的 h1/h2、地址拦截、私网 ACL、隐私访问日志、多用户、多端口、WARP upstream 片段。示例不被主配置自动 import。
+主配置在 **`/etc/caddy/Caddyfile`**。示例在 **`/etc/caddy/examples/`**，包括标准模板和可选的 h3、地址拦截、私网 ACL、隐私访问日志、多用户、多端口、WARP upstream 片段。示例不被主配置自动 import。
 
 ## 现有部署与手工编辑
 

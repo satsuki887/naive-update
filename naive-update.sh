@@ -229,6 +229,21 @@ need() { command -v "$1" >/dev/null 2>&1 || die "缺少 $1；请运行 deps 安�
 root() { [[ $EUID == 0 && $(uname -s) == Linux ]] || die '此操作需要 Linux root'; }
 ask() { local answer; [[ $YES == 1 ]] && return 0; [[ -t 0 ]] || die '非交互执行需要 --yes'; read -r -p "$1 [y/N]：" answer; [[ $answer == y || $answer == Y ]]; }
 prompt() { local value; read -r -p "$2${3:+ [$3]}：" value; printf -v "$1" '%s' "${value:-${3:-}}"; }
+prompt_secret() {
+    local var=$1 label=$2 value='' char
+    printf '%s' "$label"
+    while IFS= read -r -s -n1 char; do
+        [[ -n $char ]] || break
+        if [[ $char == $'\177' || $char == $'\b' ]]; then
+            if [[ -n $value ]]; then value=${value%?}; printf '\b \b'; fi
+        else
+            value+=$char
+            printf '*'
+        fi
+    done
+    printf '\n'
+    printf -v "$var" '%s' "$value"
+}
 prompt_until() {
     local var=$1 label=$2 default=$3 validator=$4 answer
     shift 4
@@ -557,12 +572,14 @@ valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }
 valid_email() { [[ $1 =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; }
 valid_email_optional() { [[ -z $1 ]] || valid_email "$1"; }
 valid_camouflage() { [[ $1 == local || $1 =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]]; }
+valid_masquerade_optional() { [[ -z $1 || $1 =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]]; }
 valid_username() { valid_credential "$1" && [[ $1 != *:* ]]; }
 render_config() {
     local domain=$1 port=$2 username=$3 password=$4 mode=$5 tls_value=$6 camouflage=$7 www=$8
     valid_domain "$domain" || die '域名无效'; valid_port "$port" || die '端口无效'
     if ! valid_username "$username" || ! valid_credential "$password"; then die '凭证不能为空或含控制字符、花括号；用户名不能含冒号'; fi
-    printf '{\n'; [[ $camouflage != local ]] || printf '\torder forward_proxy before file_server\n'
+    printf '{\n\tservers {\n\t\tprotocols h1 h2\n\t}\n'
+    [[ $camouflage != local ]] || printf '\torder forward_proxy before file_server\n'
     printf '\tlog {\n\t\texclude http.log.error\n\t}\n}\n'
     if [[ $port == 443 ]]; then printf ':443, %s {\n' "$domain"; else printf ':%s, %s:%s {\n' "$port" "$domain" "$port"; fi
     case $mode in auto) [[ -z $tls_value ]] || printf '\ttls %s\n' "$(printf %s "$tls_value" | quote)";; manual) printf '\ttls %s %s\n' "$(printf %s "$tls_value/cert.crt" | quote)" "$(printf %s "$tls_value/private.key" | quote)";; *) die '证书模式无效';; esac
@@ -577,12 +594,8 @@ examples() {
     render_config example.com 443 CHANGE_ME CHANGE_ME auto '' local /var/lib/naive-caddy/www >"$dir/Caddyfile.standard"
     cat >"$dir/optional-snippets.txt" <<'EOF'
 # 可选片段，不会被主配置自动加载。请手工复制所需内容并验证。
-# 默认不限制 HTTP 协议，不拦截 IP，不放行额外私网地址。
-
-# 全局 options 块中限制 HTTP/1.1 + HTTP/2（关闭 HTTP/3）
-# servers {
-#     protocols h1 h2
-# }
+# 默认只启用 HTTP/1.1 + HTTP/2，不拦截 IP，不放行额外私网地址。
+# 需要 HTTP/3 时，在全局 options 的 servers 块加入 h3。
 
 # 在站点中声明 matcher；在 route 内 forward_proxy 之前执行 abort
 # @denied remote_ip 203.0.113.0/24 198.51.100.0/24
@@ -675,7 +688,7 @@ deploy() {
         prompt_until port 'HTTPS 端口' 443 valid_port
         prompt_until username '代理用户名' '' valid_username
         while :; do
-            read -r -s -p '代理密码（留空随机生成）：' password; say ''
+            prompt_secret password '代理密码（留空随机生成）：'
             [[ -n $password ]] || password=$(openssl rand -hex 16)
             valid_credential "$password" && break
             say '密码不能含控制字符或花括号，请重新输入。'
@@ -742,7 +755,7 @@ EOF
     json_atomic "$STATE/current-build.json" <"$dir/build.json"; commit_tx; examples; install_tool
     say "安装成功；主配置：$CONFIG；可选示例：$(dirname "$CONFIG")/examples/"
     [[ $certmode != manual ]] || cert_hook_info
-    say '请按监听配置放行系统防火墙/云安全组的 TCP；需要 HTTP/3 时另放行对应 UDP。'
+    say '请按监听配置放行 TCP；默认只启用 h1/h2，需要 HTTP/3 时再在 Caddyfile 中启用并放行 UDP。'
 }
 adapt_json() { tmpdir; ADAPTED=$REPLY/config.json; "$BIN" adapt --config "$CONFIG" --adapter caddyfile >"$ADAPTED"; }
 discover_domain() {
@@ -797,8 +810,7 @@ cert_status() {
 }
 acme_client() { REPLY=${ACME_HOME:-$HOME/.acme.sh}/acme.sh; }
 acme_example() {
-    local kind=${1:-$SERVICE_KIND} client reload domain=example.com
-    client=${ACME_HOME:-$HOME/.acme.sh}/acme.sh
+    local kind=${1:-$SERVICE_KIND} reload domain=example.com certdir=${ACME_CERT_DIR:-/root/certs}
     if [[ $kind == hysteria ]]; then
         reload="systemctl restart $SERVICE"
     else
@@ -807,20 +819,20 @@ acme_example() {
     say ''
     say 'ACME 申请示例（替换域名和 API Key 后执行；账户邮箱在安装时设置）：'
     printf '  export Namesilo_Key=%s\n' "'你的 NameSilo API Key'"
-    printf '  %s --set-default-ca --server letsencrypt\n' "$client"
-    printf '  %s --issue --dns dns_namesilo --dnssleep 300 -d %s -d %s\n' "$client" "$domain" "'*.$domain'"
+    printf '  acme.sh --set-default-ca --server letsencrypt\n'
+    printf '  acme.sh --issue --dns dns_namesilo --dnssleep 300 -d %s -d %s\n' "$domain" "'*.$domain'"
     say ''
     say '安装证书并重载服务示例：'
-    printf '  %s --install-cert -d %s \\\n' "$client" "$domain"
-    printf '    --key-file %s \\\n' "$CERT_ROOT/current/private.key"
-    printf '    --fullchain-file %s \\\n' "$CERT_ROOT/current/cert.crt"
+    printf '  acme.sh --install-cert -d %s \\\n' "$domain"
+    printf '    --key-file %s/private.key \\\n' "$certdir"
+    printf '    --fullchain-file %s/cert.crt \\\n' "$certdir"
     printf '    --reloadcmd %s\n' "'$reload'"
     say ''
     say "上面把默认 CA 切换为 Let's Encrypt；如需继续使用 ZeroSSL，跳过 --set-default-ca 这一行。"
-    say 'install-cert 会直接覆盖固定证书路径并重载；首次部署需在安装向导选择“已有证书”才会生成该目录。'
+    say '证书路径需与服务的 tls 配置一致；非 root 服务不要使用 /root 目录。'
 }
 acme_install() {
-    local email dir client
+    local email dir client certdir
     root
     need git
     acme_client; client=$REPLY
@@ -842,7 +854,16 @@ acme_install() {
     [[ -z ${ACME_HOME:-} ]] || install+=(--home "$ACME_HOME")
     (cd "$dir" && ./acme.sh "${install[@]}") || die 'acme.sh 安装失败'
     [[ -x $client ]] || die "安装后未找到 $client"
-    say "acme.sh 已安装：$client"
+    if ! command -v acme.sh >/dev/null 2>&1; then
+        if [[ -e /usr/local/bin/acme.sh && ! -L /usr/local/bin/acme.sh ]]; then
+            say '已存在 /usr/local/bin/acme.sh，未覆盖'
+        else
+            ln -sfn -- "$client" /usr/local/bin/acme.sh || die '无法创建 /usr/local/bin/acme.sh'
+        fi
+    fi
+    certdir=${ACME_CERT_DIR:-/root/certs}
+    [[ -d $certdir ]] || { mkdir -p "$certdir"; chmod 700 "$certdir"; }
+    say "acme.sh 已安装：$(command -v acme.sh || printf '%s' "$client")"
     acme_example
 }
 acme_existing() {
@@ -995,12 +1016,7 @@ cert_activate() {
     [[ ! -e $CERT_ROOT/current || -L $CERT_ROOT/current ]] || die 'current 必须为本工具管理的证书链接'
     ln -s -- "$1" "$link"; mv -fT "$link" "$CERT_ROOT/current"
 }
-cert_hook_info() {
-    say "固定完整链：$CERT_ROOT/current/cert.crt"
-    say "固定私钥：  $CERT_ROOT/current/private.key"
-    say '下面的 install-cert 直接写入固定证书路径并重载服务；如需校验后成对切换和回滚，可改用 cert deploy。'
-    acme_example "${1:-}"
-}
+cert_hook_info() { acme_example "${1:-}"; }
 cert_deploy() {
     local group user id staged
     [[ -n $CERT_FILE && -n $KEY_FILE && -n $DOMAIN ]] || die '需要 --cert、--key、--domain'
@@ -1047,7 +1063,7 @@ hysteria_fetch() {
     say "目标：$actual；SHA256：$expected"; REPLY=$work/hysteria
 }
 hysteria_install() {
-    local staged domain port password cert='' key='' group id
+    local staged domain port password cert='' key='' group id masquerade
     [[ ! -e $BIN && ! -e $CONFIG && ! -e $UNIT ]] || die '检测到现有 Hysteria，请选择更新或编辑配置'
     [[ $(systemctl show "$SERVICE" -p LoadState --value 2>/dev/null || :) != loaded ]] || die '已存在同名服务'
     prompt_until domain '证书域名' '' valid_domain; DOMAIN=$domain
@@ -1066,11 +1082,12 @@ hysteria_install() {
         say '证书校验失败，请重新输入。'
     done
     while :; do
-        read -r -s -p 'Hysteria 密码（留空随机生成）：' password; say ''
+        prompt_secret password 'Hysteria 密码（留空随机生成）：'
         [[ -n $password ]] || password=$(openssl rand -hex 16)
         valid_credential "$password" && break
         say '密码不能含控制字符或花括号，请重新输入。'
     done
+    prompt_until masquerade '伪装站 HTTPS URL（留空不启用）' '' valid_masquerade_optional
     hysteria_fetch; staged=$REPLY
     ask "安装 Hysteria，监听 UDP $port，创建独立用户 $RUN_USER 并启动？" || return
     if ! id "$RUN_USER" >/dev/null 2>&1; then useradd --system --user-group --no-create-home --shell /usr/sbin/nologin "$RUN_USER"; fi
@@ -1080,7 +1097,13 @@ hysteria_install() {
     snapshot deploy; id=$REPLY; begin_tx "$id"
     copy_atomic "$staged" "$BIN"; chmod 755 "$BIN"
     # JSON strings are also valid YAML scalars, including passwords with punctuation.
-    printf 'listen: ":%s"\ntls:\n  cert: %s\n  key: %s\nauth:\n  type: password\n  password: %s\n' "$port" "$(printf %s "$CERT_ROOT/current/cert.crt" | quote)" "$(printf %s "$CERT_ROOT/current/private.key" | quote)" "$(printf %s "$password" | quote)" >"$CONFIG"
+    {
+        printf 'listen: ":%s"\ntls:\n  cert: %s\n  key: %s\nauth:\n  type: password\n  password: %s\n' "$port" "$(printf %s "$CERT_ROOT/current/cert.crt" | quote)" "$(printf %s "$CERT_ROOT/current/private.key" | quote)" "$(printf %s "$password" | quote)"
+        printf '# 不设置 bandwidth，服务端使用 BBR\ningoreClientBandwidth: false\n# 保留 UDP，空闲超时 60s\ndisableUDP: false\nudpIdleTimeout: 60s\n'
+        if [[ -n $masquerade ]]; then
+            printf 'masquerade:\n  type: proxy\n  proxy:\n    url: %s\n    rewriteHost: true\n' "$(printf %s "$masquerade" | quote)"
+        fi
+    } >"$CONFIG"
     chown "root:$group" "$CONFIG"; chmod 640 "$CONFIG"
     cat >"$UNIT" <<EOF
 [Unit]

@@ -6,7 +6,7 @@
 
 菜单 **15** 提供首次安装、更新、服务管理、配置编辑、证书部署说明和备份恢复。原有独立更新脚本的功能已并入本工具，可以删除该脚本；不要同时运行旧脚本和本工具，两者的锁相互独立。
 
-默认兼容 `/usr/local/bin/hysteria`、`/etc/hysteria/config.yaml` 和 `hysteria-server.service`。首次安装使用独立用户、已有证书和随机密码（也可自填），默认 **UDP 8443**，避免与 Naive HTTP/3 的 UDP 443 冲突。需自行放行防火墙/云安全组。
+默认兼容 `/usr/local/bin/hysteria`、`/etc/hysteria/config.yaml` 和 `hysteria-server.service`。首次安装使用独立用户、已有证书和随机密码（也可自填），默认 **UDP 8443**，避免与可能启用的 Naive HTTP/3（UDP 443）冲突。需自行放行防火墙/云安全组。
 
 ```bash
 sudo naive-update hysteria install
@@ -21,7 +21,7 @@ sudo naive-update hysteria recover
 
 Hysteria 备份独立存放在 `/var/lib/naive-update/hysteria`；菜单 12 属于 Naive/系统变更，Hysteria 使用菜单 15 内的恢复操作。可用 `HYSTERIA_BIN/CONFIG/SERVICE/UNIT/STATE/USER/CERT_ROOT` 环境变量指定自定义部署，恢复和续期时须保持一致。`--release app/v2.x.y` 可指定官方稳定标签。
 
-客户端使用安装时填写的域名和端口，密码保存在配置的 `auth.password`，默认不打印到日志；已有复杂 YAML 不会被自动重写。首次生成的是最小 TLS + 密码配置，伪装、ACL、端口跳跃等通过配置编辑按需添加。
+客户端使用安装时填写的域名和端口，密码保存在配置的 `auth.password`，默认不打印到日志。安装时可填写伪装站 HTTPS URL；生成的配置包含 `ignoreClientBandwidth: false`、`disableUDP: false`、`udpIdleTimeout: 60s`，以及可选的 `masquerade` 反向代理（`rewriteHost: true`）。不设置 `bandwidth`，服务端使用 BBR。ACL、端口跳跃等仍通过配置编辑按需添加。
 
 ## 安装 acme.sh 与 NameSilo 示例
 

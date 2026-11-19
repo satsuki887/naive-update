@@ -12,8 +12,9 @@ ok() { count=$((count+1)); printf 'ok %s - %s\n' "$count" "$1"; }
 bad() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
 reject() { if bash -c 'source "$1";shift;"$@"' _ "$SCRIPT" "$@" >/dev/null 2>&1; then bad "accepted invalid input: $1"; fi; ok "reject $1"; }
 render_config proxy.example.com 443 user 'pass:quote"and space' auto '' local /var/lib/naive-caddy/www >"$work/default"
-! grep -Eq 'protocols|remote_ip|acl|http_port|header_up' "$work/default" || bad 'custom restrictions leaked into defaults'
+! grep -Eq 'remote_ip|acl|http_port|header_up' "$work/default" || bad 'custom restrictions leaked into defaults'
 ok 'clean official defaults'
+grep -q 'protocols h1 h2' "$work/default"; ok 'defaults restrict HTTP protocols to h1/h2'
 grep -q 'order forward_proxy before file_server' "$work/default"; grep -q 'exclude http.log.error' "$work/default"; ok 'official routing and error-log privacy'
 render_config proxy.example.com 8443 user password auto '' https://example.org /unused >"$work/reverse"
 grep -q 'reverse_proxy https://example.org' "$work/reverse"; if grep -q header_up "$work/reverse"; then bad 'obsolete upstream Host'; fi; ok 'modern HTTPS upstream without obsolete Host override'

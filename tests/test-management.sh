@@ -88,30 +88,36 @@ chmod +x "$TEST_WORK/mock-bin/gh"
 PATH="$TEST_WORK/mock-bin:$PATH" REQUESTED_RELEASE='' GITHUB_OUTPUT="$TEST_WORK/discover" bash "$(dirname "$SCRIPT")/ci/prepare-release.sh"
 grep -q '^needed=false$' "$TEST_WORK/discover"
 echo 'ok - empty scheduled/manual release uses authenticated gh discovery and skips complete releases'
-CONFIG=/etc/caddy/Caddyfile SERVICE=caddy.service CERT_ROOT=/etc/caddy/managed-certs
+ACME_CERT_DIR='' CONFIG=/etc/caddy/Caddyfile SERVICE=caddy.service
 out=$(acme_example)
 grep -q 'Namesilo_Key' <<<"$out"
 grep -q -- '--set-default-ca --server letsencrypt' <<<"$out"
 grep -q -- '--dnssleep 300' <<<"$out"
 grep -q -- '--install-cert' <<<"$out"
+grep -q 'acme.sh --issue' <<<"$out"
+grep -q '/root/certs/cert.crt' <<<"$out"
 grep -q 'caddy reload --config /etc/caddy/Caddyfile' <<<"$out"
-grep -q '/etc/caddy/managed-certs/current/cert.crt' <<<"$out"
-[[ $out != *'hysteria cert-deploy'* ]]
-SERVICE=hysteria-server.service CERT_ROOT=/etc/hysteria/managed-certs
+[[ $out != *'/root/.acme.sh'* ]]
+SERVICE=hysteria-server.service
 out=$(acme_example hysteria)
 grep -q 'systemctl restart hysteria-server.service' <<<"$out"
-grep -q '/etc/hysteria/managed-certs/current/cert.crt' <<<"$out"
-SERVICE=caddy.service CERT_ROOT=/etc/caddy/managed-certs
-echo 'ok - ACME examples use NameSilo DNS sleep and service-specific reload'
+grep -q '/root/certs/cert.crt' <<<"$out"
+SERVICE=caddy.service
+echo 'ok - ACME examples use short acme.sh commands, /root/certs and service-specific reload'
 domain_check=''
 prompt_until domain_check '域名' '' valid_domain <<< $'bad domain\nnana.artoria.top'
 [[ $domain_check == nana.artoria.top ]]
+secret_check=''
+prompt_secret secret_check '密码：' <<< $'ab\177c'
+[[ $secret_check == ac ]]
 valid_port 443 && valid_port 8443 && ! valid_port 70000 && ! valid_port ''
 valid_camouflage local && valid_camouflage https://example.com && valid_camouflage https://example.com:8443
 ! valid_camouflage ftp://example.com && ! valid_camouflage 'https://example.com/path'
+valid_masquerade_optional '' && valid_masquerade_optional https://example.com
+! valid_masquerade_optional local && ! valid_masquerade_optional http://example.com
 valid_username user && ! valid_username 'us:er' && ! valid_username ''
 valid_email a@b.co && ! valid_email bad
-echo 'ok - invalid install input is re-requested and validators reject bad values'
+echo 'ok - invalid install input is re-requested, secrets mask input and validators reject bad values'
 # Regression: acme.sh's installer must run from its clone directory.
 acme_home=$TEST_WORK/acme-home
 root() { :; }
@@ -127,9 +133,12 @@ cp ./acme.sh "$HOME/.acme.sh/acme.sh"
 EOF
     chmod +x "$dir/acme.sh"
 }
+mkdir -p "$TEST_WORK/mock-bin"
+printf '#!/usr/bin/env bash\n' >"$TEST_WORK/mock-bin/acme.sh"
+chmod +x "$TEST_WORK/mock-bin/acme.sh"
 # shellcheck disable=SC2031 # exported only for the fake installer used by this test
 export HOME=$acme_home
-ACME_HOME='' ACME_EMAIL=ci@example.com YES=1 STATE=$TEST_WORK/acme-state TOOL=/usr/bin/naive-update
+PATH="$TEST_WORK/mock-bin:$PATH" ACME_CERT_DIR=$TEST_WORK/certs ACME_HOME='' ACME_EMAIL=ci@example.com YES=1 STATE=$TEST_WORK/acme-state TOOL=/usr/bin/naive-update
 acme_install >/dev/null
-[[ -x $acme_home/.acme.sh/acme.sh ]]
+[[ -x $acme_home/.acme.sh/acme.sh && -d $TEST_WORK/certs ]]
 echo 'ok - acme.sh installer runs from its clone directory'
