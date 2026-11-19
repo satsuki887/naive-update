@@ -229,6 +229,15 @@ need() { command -v "$1" >/dev/null 2>&1 || die "缺少 $1；请运行 deps 安�
 root() { [[ $EUID == 0 && $(uname -s) == Linux ]] || die '此操作需要 Linux root'; }
 ask() { local answer; [[ $YES == 1 ]] && return 0; [[ -t 0 ]] || die '非交互执行需要 --yes'; read -r -p "$1 [y/N]：" answer; [[ $answer == y || $answer == Y ]]; }
 prompt() { local value; read -r -p "$2${3:+ [$3]}：" value; printf -v "$1" '%s' "${value:-${3:-}}"; }
+prompt_until() {
+    local var=$1 label=$2 default=$3 validator=$4 answer
+    shift 4
+    while :; do
+        prompt answer "$label" "$default"
+        if "$validator" "$answer" "$@"; then printf -v "$var" '%s' "$answer"; return 0; fi
+        say '输入无效，请重新输入。'
+    done
+}
 digest() { sha256sum -- "$1" | awk '{print $1}'; }
 now() { date -u +%Y%m%dT%H%M%SZ; }
 tmpdir() { REPLY=$(mktemp -d); TEMPS+=("$REPLY"); }
@@ -544,10 +553,15 @@ reload_config() {
 quote() { jq -Rs .; }
 valid_domain() { [[ $1 =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ && $1 == *.* && $1 != *..* && ${#1} -le 253 ]]; }
 valid_credential() { [[ -n $1 && $1 != *'{'* && $1 != *'}'* && ! $1 =~ [[:cntrl:]] ]]; }
+valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }
+valid_email() { [[ $1 =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; }
+valid_email_optional() { [[ -z $1 ]] || valid_email "$1"; }
+valid_camouflage() { [[ $1 == local || $1 =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]]; }
+valid_username() { valid_credential "$1" && [[ $1 != *:* ]]; }
 render_config() {
     local domain=$1 port=$2 username=$3 password=$4 mode=$5 tls_value=$6 camouflage=$7 www=$8
-    valid_domain "$domain" || die '域名无效'; [[ $port =~ ^[0-9]+$ && $port -gt 0 && $port -le 65535 ]] || die '端口无效'
-    if ! valid_credential "$username" || [[ $username == *:* ]] || ! valid_credential "$password"; then die '凭证不能为空或含控制字符、花括号；用户名不能含冒号'; fi
+    valid_domain "$domain" || die '域名无效'; valid_port "$port" || die '端口无效'
+    if ! valid_username "$username" || ! valid_credential "$password"; then die '凭证不能为空或含控制字符、花括号；用户名不能含冒号'; fi
     printf '{\n'; [[ $camouflage != local ]] || printf '\torder forward_proxy before file_server\n'
     printf '\tlog {\n\t\texclude http.log.error\n\t}\n}\n'
     if [[ $port == 443 ]]; then printf ':443, %s {\n' "$domain"; else printf ':%s, %s:%s {\n' "$port" "$domain" "$port"; fi
@@ -555,7 +569,7 @@ render_config() {
     if [[ $camouflage == local ]]; then printf '\tencode\n'; else printf '\troute {\n'; fi
     printf '\tforward_proxy {\n\t\tbasic_auth %s %s\n\t\thide_ip\n\t\thide_via\n\t\tprobe_resistance\n\t}\n' "$(printf %s "$username" | quote)" "$(printf %s "$password" | quote)"
     if [[ $camouflage == local ]]; then printf '\tfile_server {\n\t\troot %s\n\t}\n' "$(printf %s "$www" | quote)"
-    else [[ $camouflage =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]] || die '伪装站须为 HTTPS 域名地址，不带路径或凭证'; printf '\treverse_proxy %s\n\t}\n' "$camouflage"; fi
+    else valid_camouflage "$camouflage" || die '伪装站须为 HTTPS 域名地址，不带路径或凭证'; printf '\treverse_proxy %s\n\t}\n' "$camouflage"; fi
     printf '}\n'
 }
 examples() {
@@ -644,26 +658,52 @@ deploy() {
     [[ $(systemctl show "$SERVICE" -p LoadState --value 2>/dev/null || :) != loaded ]] || die '已存在同名 systemd 服务，不覆盖部署'
     ask '安装全新服务端、创建独立运行用户和 systemd 服务并启动？' || return 0
     if [[ -z $dir ]]; then
-        prompt choice '程序来源：1 本仓库 CI 包，2 本地官方源码编译' 1
+        while :; do
+            prompt choice '程序来源：1 本仓库 CI 包，2 本地官方源码编译' 1
+            [[ $choice == 1 || $choice == 2 ]] && break
+            say '请输入 1 或 2。'
+        done
         OUTPUT=$STATE/artifacts/$(now); mkdir -p "$STATE/artifacts"
-        case $choice in 1) fetch_build;; 2) build_source;; *) die '无效选项';; esac; dir=$OUTPUT
+        case $choice in 1) fetch_build;; 2) build_source;; esac; dir=$OUTPUT
     fi
     verify_build "$dir"; new_user; group=$(id -gn "$RUN_USER")
     mkdir -p "$(dirname "$CONFIG")" "$(dirname "$BIN")" "$(dirname "$UNIT")"; chmod 755 "$(dirname "$CONFIG")"
     candidate=$(mktemp "$(dirname "$CONFIG")/.naive-new.XXXXXX")
     if [[ -n $CONFIG_SOURCE ]]; then regular "$CONFIG_SOURCE"; cp "$CONFIG_SOURCE" "$candidate"
     else
-        prompt domain '域名（先解析到本服务器）'; valid_domain "$domain" || die '无效域名'
-        prompt port 'HTTPS 端口' 443; prompt username '代理用户名'
-        read -r -s -p '代理密码（留空随机生成）：' password; say ''; [[ -n $password ]] || password=$(openssl rand -hex 16)
-        prompt choice '证书：1 Caddy 自动 ACME，2 已有完整链证书和私钥' 2
-        case $choice in
-            1) certmode=auto; prompt email 'ACME 邮箱（可留空）'; say '自动签发需域名解析正确，公网 80 或 443 可完成验证。';;
-            2) certmode=manual; prompt cert '完整链证书文件'; prompt key '无口令私钥文件'; check_cert_pair "$cert" "$key" "$domain"
-               cert_stage "$cert" "$key" "$group"; cert_activate "$REPLY"; certdir=$CERT_ROOT/current;;
-            *) die '无效证书选项';;
-        esac
-        prompt camouflage '伪装：local 本地静态页，或 https://域名' local
+        prompt_until domain '域名（先解析到本服务器）' '' valid_domain
+        prompt_until port 'HTTPS 端口' 443 valid_port
+        prompt_until username '代理用户名' '' valid_username
+        while :; do
+            read -r -s -p '代理密码（留空随机生成）：' password; say ''
+            [[ -n $password ]] || password=$(openssl rand -hex 16)
+            valid_credential "$password" && break
+            say '密码不能含控制字符或花括号，请重新输入。'
+        done
+        while :; do
+            prompt choice '证书：1 Caddy 自动 ACME，2 已有完整链证书和私钥' 2
+            case $choice in
+                1)
+                    certmode=auto
+                    prompt_until email 'ACME 邮箱（可留空）' '' valid_email_optional
+                    say '自动签发需域名解析正确，公网 80 或 443 可完成验证。'
+                    break
+                    ;;
+                2)
+                    certmode=manual
+                    while :; do
+                        prompt cert '完整链证书文件' "$cert"
+                        prompt key '无口令私钥文件' "$key"
+                        if (check_cert_pair "$cert" "$key" "$domain"); then break; fi
+                        say '证书校验失败，请重新输入。'
+                    done
+                    cert_stage "$cert" "$key" "$group"; cert_activate "$REPLY"; certdir=$CERT_ROOT/current
+                    break
+                    ;;
+                *) say '请输入 1 或 2。' ;;
+            esac
+        done
+        prompt_until camouflage '伪装：local 本地静态页，或 https://域名' local valid_camouflage
         if [[ $certmode == auto ]]; then render_config "$domain" "$port" "$username" "$password" auto "$email" "$camouflage" "$DATA/www" >"$candidate"
         else render_config "$domain" "$port" "$username" "$password" manual "$certdir" "$camouflage" "$DATA/www" >"$candidate"; fi
     fi
@@ -785,8 +825,11 @@ acme_install() {
     need git
     acme_client; client=$REPLY
     email=${ACME_EMAIL:-}
-    [[ -n $email ]] || prompt email 'ACME 账户邮箱'
-    [[ $email =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die '邮箱格式无效'
+    if [[ -n $email ]]; then
+        valid_email "$email" || die 'ACME_EMAIL 格式无效'
+    else
+        prompt_until email 'ACME 账户邮箱' '' valid_email
+    fi
     if [[ -x $client ]]; then
         say "acme.sh 已安装：$client"
         ask '重新安装 / 更新 acme.sh？' || { acme_example; return 0; }
@@ -1007,13 +1050,27 @@ hysteria_install() {
     local staged domain port password cert key group id
     [[ ! -e $BIN && ! -e $CONFIG && ! -e $UNIT ]] || die '检测到现有 Hysteria，请选择更新或编辑配置'
     [[ $(systemctl show "$SERVICE" -p LoadState --value 2>/dev/null || :) != loaded ]] || die '已存在同名服务'
-    prompt domain '证书域名'; valid_domain "$domain" || die '无效域名'; DOMAIN=$domain
-    prompt port 'Hysteria UDP 端口（避免与 Caddy HTTP/3 冲突）' 8443
-    [[ $port =~ ^[0-9]+$ && ${#port} -le 5 ]] || die '无效端口'
-    ((10#$port>=1 && 10#$port<=65535)) || die '无效端口'
-    if command -v ss >/dev/null && [[ -n $(ss -H -lun "sport = :$port") ]]; then die "UDP $port 已被占用"; fi
-    prompt cert '已有完整链证书路径'; prompt key '已有无口令私钥路径'; check_cert_pair "$cert" "$key" "$domain"
-    read -r -s -p 'Hysteria 密码（留空随机生成）：' password; say ''; [[ -n $password ]] || password=$(openssl rand -hex 16)
+    prompt_until domain '证书域名' '' valid_domain; DOMAIN=$domain
+    while :; do
+        prompt_until port 'Hysteria UDP 端口（避免与 Caddy HTTP/3 冲突）' 8443 valid_port
+        if command -v ss >/dev/null && [[ -n $(ss -H -lun "sport = :$port") ]]; then
+            say "UDP $port 已被占用，请换一个端口。"
+        else
+            break
+        fi
+    done
+    while :; do
+        prompt cert '已有完整链证书路径' "$cert"
+        prompt key '已有无口令私钥路径' "$key"
+        if (check_cert_pair "$cert" "$key" "$domain"); then break; fi
+        say '证书校验失败，请重新输入。'
+    done
+    while :; do
+        read -r -s -p 'Hysteria 密码（留空随机生成）：' password; say ''
+        [[ -n $password ]] || password=$(openssl rand -hex 16)
+        valid_credential "$password" && break
+        say '密码不能含控制字符或花括号，请重新输入。'
+    done
     hysteria_fetch; staged=$REPLY
     ask "安装 Hysteria，监听 UDP $port，创建独立用户 $RUN_USER 并启动？" || return
     if ! id "$RUN_USER" >/dev/null 2>&1; then useradd --system --user-group --no-create-home --shell /usr/sbin/nologin "$RUN_USER"; fi

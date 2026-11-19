@@ -103,6 +103,15 @@ grep -q 'systemctl restart hysteria-server.service' <<<"$out"
 grep -q '/etc/hysteria/managed-certs/current/cert.crt' <<<"$out"
 SERVICE=caddy.service CERT_ROOT=/etc/caddy/managed-certs
 echo 'ok - ACME examples use NameSilo DNS sleep and service-specific reload'
+domain_check=''
+prompt_until domain_check '域名' '' valid_domain <<< $'bad domain\nnana.artoria.top'
+[[ $domain_check == nana.artoria.top ]]
+valid_port 443 && valid_port 8443 && ! valid_port 70000 && ! valid_port ''
+valid_camouflage local && valid_camouflage https://example.com && valid_camouflage https://example.com:8443
+! valid_camouflage ftp://example.com && ! valid_camouflage 'https://example.com/path'
+valid_username user && ! valid_username 'us:er' && ! valid_username ''
+valid_email a@b.co && ! valid_email bad
+echo 'ok - invalid install input is re-requested and validators reject bad values'
 # Regression: acme.sh's installer must run from its clone directory.
 acme_home=$TEST_WORK/acme-home
 root() { :; }
