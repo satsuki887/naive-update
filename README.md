@@ -70,7 +70,7 @@ sudo env NO_COLOR=1 naive-update             # 无 ANSI 颜色
 
 准备域名，先把 A/AAAA 记录指向这台服务器。下载单文件，打开菜单 1。选择使用本仓库 CI 包或按官方源码本地编译，然后填写域名、监听端口、用户名和密码。
 
-证书默认使用你已配置的 ACME 所签发的完整链证书和无口令私钥，并提供续期部署命令；也可选择 **Caddy 自带 ACME 自动申请与续期**。菜单 9 可从官方仓库安装 acme.sh，并显示 NameSilo DNS-01 申请与 install-cert 部署示例。自动 ACME 需要域名解析正确，公网 80 或 443 能完成挑战。外部证书会检查有效期、域名和公私钥匹配，复制到服务可读的专用目录。
+证书默认使用你已配置的 ACME 所签发的完整链证书和无口令私钥；菜单 9 的 install-cert 示例直接写入固定目录并重载（Naive 用 `caddy reload`，Hysteria 用 `systemctl restart`）。也可选择 **Caddy 自带 ACME 自动申请与续期**。菜单 9 可从官方仓库安装 acme.sh，并显示 NameSilo DNS-01 申请与 install-cert 部署示例。自动 ACME 需要域名解析正确，公网 80 或 443 能完成挑战。外部证书会检查有效期、域名和公私钥匹配，复制到服务可读的专用目录。
 
 全新安装使用独立 `naive-caddy` 用户和用户组，以 `CAP_NET_BIND_SERVICE` 绑定低端口，启用 systemd `NoNewPrivileges`、`PrivateTmp`、`ProtectHome` 等设置。数据放在 `/var/lib/naive-caddy`；管理状态及备份放在 root 私有的 `/var/lib/naive-update`。
 

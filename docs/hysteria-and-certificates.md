@@ -31,42 +31,43 @@ Hysteria 备份独立存放在 `/var/lib/naive-update/hysteria`；菜单 12 属�
 
 ```bash
 export Namesilo_Key='你的 NameSilo API Key'
-/root/.acme.sh/acme.sh --issue --dns dns_namesilo -d example.com -d '*.example.com'
+/root/.acme.sh/acme.sh --issue --dns dns_namesilo --dnssleep 300 -d example.com -d '*.example.com'
 ```
 
-续期时用 `--install-cert` 把证书写到暂存路径，再用 reloadcmd 调用本工具。Naive 示例：
+`--dnssleep 300` 让 acme.sh 在写入 TXT 记录后等待 5 分钟，减少 DNS 传播导致的验证失败。
+
+用 `--install-cert` 直接写入 Caddy 使用的固定证书路径，并在成功后 reload。Naive 示例：
 
 ```bash
-mkdir -p /var/lib/naive-update/acme-staging/example.com
 /root/.acme.sh/acme.sh --install-cert -d example.com \
-  --key-file       /var/lib/naive-update/acme-staging/example.com/private.key \
-  --fullchain-file /var/lib/naive-update/acme-staging/example.com/cert.crt \
-  --reloadcmd      '/usr/bin/naive-update cert deploy --cert /var/lib/naive-update/acme-staging/example.com/cert.crt --key /var/lib/naive-update/acme-staging/example.com/private.key --domain example.com --yes'
+  --key-file       /etc/caddy/managed-certs/current/private.key \
+  --fullchain-file /etc/caddy/managed-certs/current/cert.crt \
+  --reloadcmd      'caddy reload --config /etc/caddy/Caddyfile'
 ```
 
-Hysteria 将 reloadcmd 换成 `naive-update hysteria cert-deploy ...`，暂存目录默认在 `/var/lib/naive-update/hysteria/acme-staging`。`naive-update cert acme-example` 或 `hysteria cert-hook` 会按当前服务打印对应版本。
+Caddy 会根据 `Caddyfile` 文件名自动选择 caddyfile 适配器，不需要额外加 `--adapter`。证书文件由安装向导创建为 `root:naive-caddy` 0640，acme.sh 以 root 写入时保留原权限。
 
-默认 CA 为 ZeroSSL；如需 Let's Encrypt，在 `--issue` 命令加 `--server letsencrypt`。DNS-01 不依赖 80/443 端口，但需要 NameSilo API Key 的 DNS 编辑权限。首次部署必须使用“已有证书”模式，才会生成 `managed-certs/current`；否则 `cert deploy` 会拒绝执行。
+Hysteria 使用 `/etc/hysteria/managed-certs/current/` 和 `systemctl restart hysteria-server.service`。`naive-update cert acme-example` 或 `hysteria cert-hook` 会按当前服务打印对应版本。
+
+默认 CA 为 ZeroSSL；如需 Let's Encrypt，在 `--issue` 命令加 `--server letsencrypt`。DNS-01 不依赖 80/443 端口，但需要 NameSilo API Key 的 DNS 编辑权限。首次部署必须使用“已有证书”模式，才会生成 `managed-certs/current`；否则 install-cert 的写入路径不存在。
 
 ## 固定证书路径与续期
 
-ACME 由你安装配置。Naive 向导默认选择已有证书，仍可选择 Caddy 自动 ACME。外部证书的新安装使用：
+ACME 客户端可由菜单 9 安装，也可自行配置。Naive 向导默认选择已有证书，仍可选择 Caddy 自动 ACME。外部证书的新安装使用：
 
 | 服务 | 完整链 | 私钥 |
 |---|---|---|
 | Naive | `/etc/caddy/managed-certs/current/cert.crt` | `/etc/caddy/managed-certs/current/private.key` |
 | Hysteria | `/etc/hysteria/managed-certs/current/cert.crt` | `/etc/hysteria/managed-certs/current/private.key` |
 
-acme.sh 的 `--install-cert` 先把文件写到你指定的暂存目录，再通过 `--reloadcmd` 调用下列命令，替换路径和域名：
+菜单打印的 install-cert 示例直接覆盖 `current` 下的文件，然后执行 reloadcmd；首次安装时 acme.sh 会把旧文件备份到自己的 domain 目录。若需要先校验有效期、域名和密钥匹配，再原子切换、失败自动回滚，可改用：
 
 ```bash
 naive-update cert deploy --cert /你的路径/fullchain.pem --key /你的路径/key.pem --domain example.com --yes
 naive-update hysteria cert-deploy --cert /你的路径/fullchain.pem --key /你的路径/key.pem --domain example.com --yes
 ```
 
-命令需要 root。两个服务共用证书时，续期钩子需要调用两条命令。使用自定义环境变量时，钩子也必须传入相同变量。
-
-**不要让 ACME 直接写入 `current`**。部署先校验有效期、域名和密钥匹配，在仅服务用户组可读的新目录中准备证书对，再原子切换链接。Naive 验证并重载，Hysteria 重启；失败恢复旧证书。原先停用的服务不会被自动启动。旧版本保留用于回滚，清理前需考虑相关备份是否仍会使用。
+部署命令需要 root，会写入新的版本目录并切换 `current` 链接。两种方式不要混用：install-cert 覆盖的是当前证书文件，部署命令的旧证书回滚依赖版本目录未被覆盖。使用自定义环境变量时，钩子也必须传入相同变量。两个服务共用证书时，续期钩子需要分别配置。
 
 此流程用于本次新安装。已有部署保持原证书配置，不自动迁移；原来的 `cert import` 仍是手工导入，续期需按照原路径处理。`cert hook` / `hysteria cert-hook` 显示本机路径说明。
 

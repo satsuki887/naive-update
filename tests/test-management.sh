@@ -88,16 +88,20 @@ chmod +x "$TEST_WORK/mock-bin/gh"
 PATH="$TEST_WORK/mock-bin:$PATH" REQUESTED_RELEASE='' GITHUB_OUTPUT="$TEST_WORK/discover" bash "$(dirname "$SCRIPT")/ci/prepare-release.sh"
 grep -q '^needed=false$' "$TEST_WORK/discover"
 echo 'ok - empty scheduled/manual release uses authenticated gh discovery and skips complete releases'
-TOOL=/usr/bin/naive-update
+CONFIG=/etc/caddy/Caddyfile SERVICE=caddy.service CERT_ROOT=/etc/caddy/managed-certs
 out=$(acme_example)
 grep -q 'Namesilo_Key' <<<"$out"
-grep -q 'dns_namesilo' <<<"$out"
+grep -q -- '--dnssleep 300' <<<"$out"
 grep -q -- '--install-cert' <<<"$out"
-grep -q 'cert deploy' <<<"$out"
+grep -q 'caddy reload --config /etc/caddy/Caddyfile' <<<"$out"
+grep -q '/etc/caddy/managed-certs/current/cert.crt' <<<"$out"
 [[ $out != *'hysteria cert-deploy'* ]]
+SERVICE=hysteria-server.service CERT_ROOT=/etc/hysteria/managed-certs
 out=$(acme_example hysteria)
-grep -q 'hysteria cert-deploy' <<<"$out"
-echo 'ok - ACME examples render NameSilo issuance and service-specific deployment'
+grep -q 'systemctl restart hysteria-server.service' <<<"$out"
+grep -q '/etc/hysteria/managed-certs/current/cert.crt' <<<"$out"
+SERVICE=caddy.service CERT_ROOT=/etc/caddy/managed-certs
+echo 'ok - ACME examples use NameSilo DNS sleep and service-specific reload'
 # Regression: acme.sh's installer must run from its clone directory.
 acme_home=$TEST_WORK/acme-home
 root() { :; }

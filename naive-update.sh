@@ -757,28 +757,26 @@ cert_status() {
 }
 acme_client() { REPLY=${ACME_HOME:-$HOME/.acme.sh}/acme.sh; }
 acme_example() {
-    local kind=${1:-$SERVICE_KIND} client stage deploy domain=example.com
+    local kind=${1:-$SERVICE_KIND} client reload domain=example.com
     client=${ACME_HOME:-$HOME/.acme.sh}/acme.sh
-    stage=${ACME_STAGE:-$STATE/acme-staging}/$domain
     if [[ $kind == hysteria ]]; then
-        deploy="$TOOL hysteria cert-deploy --cert $stage/cert.crt --key $stage/private.key --domain $domain --yes"
+        reload="systemctl restart $SERVICE"
     else
-        deploy="$TOOL cert deploy --cert $stage/cert.crt --key $stage/private.key --domain $domain --yes"
+        reload="caddy reload --config $CONFIG"
     fi
     say ''
     say 'ACME 申请示例（替换域名和 API Key 后执行；账户邮箱在安装时设置）：'
     printf '  export Namesilo_Key=%s\n' "'你的 NameSilo API Key'"
-    printf '  %s --issue --dns dns_namesilo -d %s -d %s\n' "$client" "$domain" "'*.$domain'"
+    printf '  %s --issue --dns dns_namesilo --dnssleep 300 -d %s -d %s\n' "$client" "$domain" "'*.$domain'"
     say ''
-    say '安装证书并触发部署示例：'
-    printf '  mkdir -p %s\n' "$stage"
+    say '安装证书并重载服务示例：'
     printf '  %s --install-cert -d %s \\\n' "$client" "$domain"
-    printf '    --key-file %s \\\n' "$stage/private.key"
-    printf '    --fullchain-file %s \\\n' "$stage/cert.crt"
-    printf '    --reloadcmd %s\n' "'$deploy'"
+    printf '    --key-file %s \\\n' "$CERT_ROOT/current/private.key"
+    printf '    --fullchain-file %s \\\n' "$CERT_ROOT/current/cert.crt"
+    printf '    --reloadcmd %s\n' "'$reload'"
     say ''
     say "默认 CA 为 ZeroSSL；如需 Let's Encrypt，在 --issue 命令加 --server letsencrypt。"
-    say '首次部署需在安装向导选择“已有证书”，才会生成固定目录 '"$CERT_ROOT/current"'。'
+    say 'install-cert 会直接覆盖固定证书路径并重载；首次部署需在安装向导选择“已有证书”才会生成该目录。'
 }
 acme_install() {
     local email dir client
@@ -800,7 +798,6 @@ acme_install() {
     [[ -z ${ACME_HOME:-} ]] || install+=(--home "$ACME_HOME")
     (cd "$dir" && ./acme.sh "${install[@]}") || die 'acme.sh 安装失败'
     [[ -x $client ]] || die "安装后未找到 $client"
-    mkdir -p "${ACME_STAGE:-$STATE/acme-staging}"; chmod 700 "${ACME_STAGE:-$STATE/acme-staging}"
     say "acme.sh 已安装：$client"
     acme_example
 }
@@ -957,7 +954,7 @@ cert_activate() {
 cert_hook_info() {
     say "固定完整链：$CERT_ROOT/current/cert.crt"
     say "固定私钥：  $CERT_ROOT/current/private.key"
-    say '不要让 acme.sh 直接写入 current；先按下面的 install-cert 写到暂存路径，再由部署命令校验并成对切换，失败时恢复旧证书。'
+    say '下面的 install-cert 直接写入固定证书路径并重载服务；如需校验后成对切换和回滚，可改用 cert deploy。'
     acme_example "${1:-}"
 }
 cert_deploy() {
