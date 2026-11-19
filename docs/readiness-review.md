@@ -6,7 +6,7 @@
 
 工作流虽然传入 GH_TOKEN，原 `api()` 的 curl 并未使用 token；查询上游 latest 失败后，jq 因没有有效输入退出。匿名额度耗尽与现象相符，但日志没有响应头，不能确认 403 的唯一原因是限流。它不是本机 Git 或 checkout 故障。
 
-修复：发现阶段改用自动读取 GH_TOKEN 的 `gh api`；运行时 API 支持 GH_TOKEN；相关 CI job 传入只读 token；API 失败时给出明确错误。另修复集成测试写死 `v2.11.7-naive2` 的问题，改为比较实际 build.json。测试改为使用本次 amd64/arm64 构建产物，避免依赖已有 Release。checkout 的 Node 20 弃用警告不是本次失败原因。
+修复：发现阶段改用自动读取 GH_TOKEN 的 `gh api`；运行时 API 支持 GH_TOKEN；相关 CI job 传入只读 token；API 失败时给出明确错误。另修复集成测试写死 `v2.11.7-naive2` 的问题，改为比较实际 build.json。测试改为使用本次构建产物，避免依赖已有 Release。checkout 的 Node 20 弃用警告不是本次失败原因。
 
 ## 功能审视与取舍
 
@@ -24,7 +24,7 @@
 
 本地环境为 Windows/Git Bash，无 Linux/systemd。Bash 语法、ShellCheck、现有功能/UI 检查及新增下载校验、二进制保留/恢复、UDP 参数恢复、CI 发现回归可在本地执行。Linux 专属的 BBR 测试由 CI 执行。
 
-新增 `tests/integration-hysteria.sh` 在一次性 Linux runner 上覆盖独立用户安装、相同版本更新、证书切换/恢复、无效配置自动恢复及中断事务恢复，配置于 amd64/arm64 CI。真正的 systemd、证书权限、内核参数和网络端到端可用性需以 CI 与目标机器结果为准；新增测试文件不等于已执行通过。
+新增 `tests/integration-hysteria.sh` 在一次性 Linux runner 上覆盖独立用户安装、相同版本更新、证书切换/恢复、无效配置自动恢复及中断事务恢复，配置于 amd64 CI。真正的 systemd、证书权限、内核参数和网络端到端可用性需以 CI 与目标机器结果为准；新增测试文件不等于已执行通过。
 
 服务健康检查确认进程持续运行和实际可执行文件摘要，不等于外网客户端代理请求已经通过。正式上线前仍需从客户端验证域名、证书链、TCP/UDP 放行及真实代理连接。
 

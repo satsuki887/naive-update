@@ -28,11 +28,7 @@ jobs:
           bash naive-update.sh --version
   integration:
     needs: source-build
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -40,7 +36,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: tested-build-${{ matrix.runner }}
+          name: tested-build
           path: ci-build
       - run: chmod +x ci-build/caddy
       - run: sudo --preserve-env=GITHUB_ACTIONS bash tests/integration-service.sh ci-build
@@ -50,11 +46,7 @@ jobs:
           render_config example.com 443 ci-user ci-password auto '' local /var/lib/naive-caddy/www > /tmp/Caddyfile.standard
           ci-build/caddy validate --config /tmp/Caddyfile.standard --adapter caddyfile
   source-build:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -67,7 +59,7 @@ jobs:
       - run: bash naive-update.sh build --output shell-build --jobs 2 --yes
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: tested-build-${{ matrix.runner }}
+          name: tested-build
           path: |
             shell-build/caddy
             shell-build/build.json
@@ -75,15 +67,11 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: source-compiler-diagnostics-${{ matrix.runner }}
+          name: source-compiler-diagnostics
           path: .naive-build.*/build.log
           include-hidden-files: true
   hysteria:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
