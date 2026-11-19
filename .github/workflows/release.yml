@@ -36,15 +36,7 @@ jobs:
   build:
     needs: discover
     if: needs.discover.outputs.needed == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            arch: amd64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -72,7 +64,7 @@ jobs:
         run: sudo --preserve-env=GITHUB_ACTIONS bash tests/integration-service.sh build
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: server-${{ matrix.arch }}
+          name: server-amd64
           path: dist/*
           if-no-files-found: error
           retention-days: 7
@@ -80,7 +72,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: compiler-log-${{ matrix.arch }}
+          name: compiler-log-amd64
           path: |
             .naive-build.*/build.log
             build/build.log
@@ -111,7 +103,7 @@ jobs:
           set -euo pipefail
           cat dist/*.sha256 > dist/SHA256SUMS
           (cd dist && sha256sum -c SHA256SUMS)
-          printf 'Built from official klzgrad/forwardproxy release **%s** using its Caddy version and patches.\n\nPackages: Linux amd64 and arm64, CGO disabled. Each archive contains caddy, build.json, build-info.txt, SHA256SUMS and LICENSES.txt.\n\nSource: https://github.com/klzgrad/forwardproxy/releases/tag/%s\n\nTool/recipe commit: %s\n\nVerify the archive against SHA256SUMS before installation. Back up and validate your configuration; restart is required.\n' "$UPSTREAM" "$UPSTREAM" "$GITHUB_SHA" > notes.md
+          printf 'Built from official klzgrad/forwardproxy release **%s** using its Caddy version and patches.\n\nPackages: Linux amd64, CGO disabled. Each archive contains caddy, build.json, build-info.txt, SHA256SUMS and LICENSES.txt.\n\nSource: https://github.com/klzgrad/forwardproxy/releases/tag/%s\n\nTool/recipe commit: %s\n\nVerify the archive against SHA256SUMS before installation. Back up and validate your configuration; restart is required.\n' "$UPSTREAM" "$UPSTREAM" "$GITHUB_SHA" > notes.md
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --target "$GITHUB_SHA" --draft --title "Naive server $UPSTREAM" --notes-file notes.md
           fi

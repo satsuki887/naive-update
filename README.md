@@ -4,7 +4,7 @@
 
 新增入口：**15 Hysteria 2 管理**、**16 UDP 缓冲区优化**。ACME 由你自行安装配置，新安装默认使用已有证书，并提供固定证书目录及续期部署钩子。详见 [Hysteria、证书与优化指南](docs/hysteria-and-certificates.md) 和 [上线前审视 / CI 故障证据](docs/readiness-review.md)。
 
-本工具由第三方维护，服务端使用 Naive 官方 `klzgrad/forwardproxy` 源码及其 Caddy 版本和补丁。GitHub Actions 定时编译 Linux amd64 / arm64 安装包。没有脚本自更新，也不使用原博主的脚本或二进制。
+本工具由第三方维护，服务端使用 Naive 官方 `klzgrad/forwardproxy` 源码及其 Caddy 版本和补丁。GitHub Actions 定时编译 Linux amd64 安装包。没有脚本自更新，也不使用原博主的脚本或二进制。
 
 ## 获取并运行
 
@@ -172,7 +172,7 @@ sudo naive-update recover --yes           # 断电/SIGKILL 等留下 pending.jso
 
 ## GitHub CI
 
-每 6 小时检查官方 forwardproxy 新稳定发布，分别在原生 amd64 / arm64 runner 上编译，两个架构都成功后才发布 `server-*` Release。可手动 Run workflow。定时任务可能延迟；公开仓库长期无活动时 GitHub 可能暂停，需要重新启用。
+每 6 小时检查官方 forwardproxy 新稳定发布，在 amd64 runner 上编译后发布 `server-*` Release。可手动 Run workflow。定时任务可能延迟；公开仓库长期无活动时 GitHub 可能暂停，需要重新启用。
 
 测试包含 ShellCheck、输入与配方验证、包内容/摘要检查、真实新安装（非 root 服务）、自定义配置保留、启动失败恢复、手动回滚和事务恢复。测试仅在一次性 runner 中创建服务，不连接生产服务器。
 

@@ -80,7 +80,7 @@ cat >"$TEST_WORK/mock-bin/gh" <<'EOF'
 case $2 in
     repos/klzgrad/forwardproxy/releases/latest) printf 'v2.11.7-naive2\n';;
     repos/satsuki887/naive-update/releases/tags/server-v2.11.7-naive2)
-        printf '{"draft":false,"assets":[{"name":"naive-server-v2.11.7-naive2-linux-amd64.tar.gz"},{"name":"naive-server-v2.11.7-naive2-linux-arm64.tar.gz"},{"name":"SHA256SUMS"}]}\n';;
+        printf '{"draft":false,"assets":[{"name":"naive-server-v2.11.7-naive2-linux-amd64.tar.gz"},{"name":"SHA256SUMS"}]}\n';;
     *) exit 1;;
 esac
 EOF

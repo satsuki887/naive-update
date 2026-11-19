@@ -15,7 +15,7 @@ cat >"$UI_CACHE/official.json" <<'EOF'
 {"tag_name":"v2.11.7-naive2","published_at":"2026-10-22T17:28:00Z"}
 EOF
 cat >"$UI_CACHE/own.json" <<'EOF'
-{"tag_name":"server-v2.11.7-naive2","draft":false,"assets":[{"name":"naive-server-v2.11.7-naive2-linux-amd64.tar.gz"},{"name":"naive-server-v2.11.7-naive2-linux-arm64.tar.gz"},{"name":"SHA256SUMS"}]}
+{"tag_name":"server-v2.11.7-naive2","draft":false,"assets":[{"name":"naive-server-v2.11.7-naive2-linux-amd64.tar.gz"},{"name":"SHA256SUMS"}]}
 EOF
 cat >"$UI_CACHE/tags.json" <<'EOF'
 [{"name":"v2.11.7-naive2","commit":{"sha":"e747854e7874000000000000000000000000000000"}},{"name":"v2.11.7-naive","commit":{"sha":"c096d6a00cb2000000000000000000000000000000"}}]
