@@ -122,9 +122,10 @@ ui_local_version() {
 }
 ui_naive_summary() {
     if [[ -n ${UI_INSTALLED_TAG:-} ]]; then
-        if [[ $UI_INSTALLED_TAG == "${UI_OFFICIAL:-}" ]]; then REPLY="$UI_INSTALLED_TAG · 官方最新"
-        elif [[ -n ${UI_OWN:-} && $UI_INSTALLED_TAG == "$UI_OWN" ]]; then REPLY="$UI_INSTALLED_TAG · 本仓库构建 · 官方 ${UI_OFFICIAL:-未获取}"
-        else REPLY="当前 $UI_INSTALLED_TAG · 官方 ${UI_OFFICIAL:-未获取} · 构建 ${UI_OWN:-未获取}"; fi
+        if [[ $UI_INSTALLED_TAG == "${UI_OFFICIAL:-}" ]]; then REPLY="$UI_INSTALLED_TAG ${C_GOOD}✓${C_RESET}"
+        elif [[ -n ${UI_OFFICIAL:-} ]]; then REPLY="$UI_INSTALLED_TAG ${C_WARN}↑ $UI_OFFICIAL${C_RESET}"
+        elif [[ -n ${UI_OWN:-} && $UI_INSTALLED_TAG == "$UI_OWN" ]]; then REPLY="$UI_INSTALLED_TAG ${C_GOOD}✓${C_RESET}"
+        else REPLY="$UI_INSTALLED_TAG"; fi
     elif [[ -n ${UI_CADDY:-} ]]; then REPLY="$UI_CADDY"
     else REPLY='未安装'; fi
 }
@@ -147,14 +148,14 @@ ui_client_summary() {
         done
     fi
     if [[ -n $installed ]]; then
-        if [[ -z $latest ]]; then REPLY="已安装 v$installed"
-        elif version_gt "$latest" "$installed"; then REPLY="已安装 v$installed · 最新 v$latest · 有更新"
-        elif [[ $latest == "$installed" ]]; then REPLY="已安装 v$installed · 最新"
-        else REPLY="已安装 v$installed · 参考 v$latest"; fi
+        if [[ -z $latest ]]; then REPLY="v$installed"
+        elif version_gt "$latest" "$installed"; then REPLY="v$installed ${C_WARN}↑ v$latest${C_RESET}"
+        elif [[ $latest == "$installed" ]]; then REPLY="v$installed ${C_GOOD}✓${C_RESET}"
+        else REPLY="v$installed"; fi
     elif [[ -n $latest ]]; then
-        REPLY="参考 v$latest（本工具不更新客户端）"
+        REPLY="${C_MUTED}参考 v$latest${C_RESET}"
     else
-        REPLY='未检测到客户端内核'
+        REPLY='未检测到'
     fi
 }
 ui_config_info() {
@@ -176,19 +177,19 @@ ui_config_info() {
 }
 ui_cert_info() {
     local cert expiry expiry_epoch remaining
-    REPLY='未读取证书信息'; UI_CERT_WARN=0
+    REPLY='未读取证书信息'; UI_CERT_SHORT='未知'; UI_CERT_WARN=0
     [[ -f $UI_JSON ]] || return 0
     cert=$(jq -r '.apps.tls.certificates.load_files[0]?.certificate // empty' "$UI_JSON")
     if [[ -z $cert ]]; then
         if [[ -n $UI_DOMAIN && -d $DATA/.local/share/caddy/certificates ]]; then cert=$(find "$DATA/.local/share/caddy/certificates" -name "$UI_DOMAIN.crt" -type f -print -quit 2>/dev/null) || cert=''; fi
-        [[ -n $cert ]] || { REPLY='Caddy 自动管理'; return; }
+        [[ -n $cert ]] || { REPLY='Caddy 自动管理'; UI_CERT_SHORT='自动'; return; }
     fi
-    if [[ ! -r $cert ]]; then REPLY='外部证书不可读'; return; fi
-    expiry=$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null) || { REPLY='证书文件无效'; return; }
+    if [[ ! -r $cert ]]; then REPLY='外部证书不可读'; UI_CERT_SHORT='不可读'; return; fi
+    expiry=$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null) || { REPLY='证书文件无效'; UI_CERT_SHORT='无效'; return; }
     expiry_epoch=$(date -d "${expiry#notAfter=}" +%s 2>/dev/null) || { REPLY=${expiry#notAfter=}; return; }
     remaining=$(( (expiry_epoch-$(date +%s))/86400 ))
-    if ((expiry_epoch<$(date +%s))); then REPLY='证书已过期'; UI_CERT_WARN=2
-    else REPLY="剩余 $remaining 天 · $(date -d "@${expiry_epoch}" +%F)"; ((remaining>=14)) || UI_CERT_WARN=1; fi
+    if ((expiry_epoch<$(date +%s))); then REPLY='证书已过期'; UI_CERT_SHORT='已过期'; UI_CERT_WARN=2
+    else REPLY="剩余 $remaining 天 · $(date -d "@${expiry_epoch}" +%F)"; UI_CERT_SHORT="$remaining 天"; ((remaining>=14)) || UI_CERT_WARN=1; fi
 }
 ui_version_rows() {
     local current package state age published=''
@@ -224,42 +225,32 @@ ui_recommendation() {
     printf '  %b! %s%b\n' "$tone" "$message" "$C_RESET"
 }
 ui_system_rows() {
-    local os info key value pid=0 service=unknown enabled=unknown started=0 memory='未知' up='未知' resources bbr queue warp address site disk
+    local os info key value service=unknown resources bbr queue warp address disk
     os=$(awk -F= '/^PRETTY_NAME=/{v=substr($0,index($0,"=")+1);gsub(/^"|"$/,"",v);print v}' /etc/os-release 2>/dev/null) || os=$(uname -s)
+    os=${os%% (*}
     resources=$(awk '/^MemTotal:/{t=$2}/^MemAvailable:/{a=$2}END{if(t>0)printf "内存 %.0f/%.0f MiB",(t-a)/1024,t/1024}' /proc/meminfo 2>/dev/null) || resources=''
     disk=$(df -Ph / 2>/dev/null | awk 'NR==2{print $4}') || disk=''
     if command -v systemctl >/dev/null; then
-        info=$(timeout 2 systemctl show "$SERVICE" -p ActiveState -p MainPID -p UnitFileState -p ExecMainStartTimestampMonotonic -p MemoryCurrent 2>/dev/null) || info=''
-        while IFS='=' read -r key value; do case $key in ActiveState) service=$value;; MainPID) pid=$value;; UnitFileState) enabled=$value;; ExecMainStartTimestampMonotonic) started=$value;; MemoryCurrent) if [[ $value =~ ^[0-9]+$ ]]; then memory="$((value/1048576)) MiB"; fi;; esac; done <<<"$info"
+        info=$(timeout 2 systemctl show "$SERVICE" -p ActiveState 2>/dev/null) || info=''
+        while IFS='=' read -r key value; do case $key in ActiveState) service=$value;; esac; done <<<"$info"
     fi
     UI_SERVICE_ACTIVE=$service
-    if [[ $started =~ ^[0-9]+$ && $started -gt 0 && -r /proc/uptime ]]; then up=$(awk -v start="$started" '{s=int($1-start/1000000);if(s<0)s=0;printf "%d天 %02d:%02d",s/86400,(s%86400)/3600,(s%3600)/60}' /proc/uptime); fi
-    case $service in active) service="${C_GOOD}● 运行中${C_RESET}";; inactive|failed) service="${C_BAD}○ 已停止 / $service${C_RESET}";; *) service="${C_WARN}○ 未运行 / 未识别${C_RESET}";; esac
-    case $enabled in enabled) enabled='已开启';; disabled) enabled='已关闭';; static) enabled='静态单元';; *) enabled=${enabled:-未知};; esac
+    case $service in active) service="${C_GOOD}● 运行中${C_RESET}";; inactive|failed) service="${C_BAD}○ 已停止${C_RESET}";; *) service="${C_WARN}○ 未运行${C_RESET}";; esac
     bbr=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null) || bbr='未知'
     queue=$(sysctl -n net.core.default_qdisc 2>/dev/null) || queue='未知'
-    if [[ $bbr == bbr ]]; then bbr="${C_GOOD}BBR 已启用${C_RESET}"; else bbr="拥塞控制 $bbr（BBR 未启用）"; fi
+    if [[ $bbr == bbr ]]; then bbr="${C_GOOD}BBR ✓${C_RESET}"; else bbr="拥塞控制 $bbr"; fi
     warp='未安装'
     if command -v warp-cli >/dev/null; then
         info=$(timeout 2 warp-cli status 2>/dev/null) || info=''
         if grep -Eqi '(^|[[:space:]])connected([[:space:]]|$)' <<<"$info"; then warp="${C_GOOD}已连接${C_RESET}"
-        elif grep -Eqi 'disconnected' <<<"$info"; then warp='已安装 / 未连接'; else warp='已安装 / 状态未知'; fi
+        elif grep -Eqi 'disconnected' <<<"$info"; then warp='未连接'; else warp='状态未知'; fi
     fi
     ui_config_info
     ui_cert_info
     address=${UI_DOMAIN:-尚未识别}
-    site="$address · ${UI_PORTS:-未识别} · ${UI_PROTOCOLS:-未知协议}"
-    [[ $UI_CONFIG_STATUS == 解析通过 ]] || site+=" · $UI_CONFIG_STATUS"
-    site+=" · 证书 $REPLY"
-    if (( ${COLUMNS:-80} >= 90 )); then
-        ui_kv '系统' "${os:-$(uname -s)} · $(uname -m) · 内核 $(uname -r) · ${resources:-内存未知} · 磁盘 ${disk:-未知}"
-    else
-        ui_kv '系统' "${os:-$(uname -s)} · $(uname -m) · 内核 $(uname -r)"
-        ui_kv '资源' "${resources:-内存未知} · 磁盘 ${disk:-未知}"
-    fi
-    ui_kv '服务' "$service · PID $pid · 运行 $up · 内存 $memory · 自启 $enabled"
-    ui_kv '站点' "$site"
-    ui_kv '优化' "$bbr · 队列 $queue · WARP $warp"
+    ui_kv '服务' "$service  $address${UI_PORTS}  ${UI_PROTOCOLS}  证书 ${UI_CERT_SHORT:-未知}"
+    ui_kv '系统' "${os:-$(uname -s)}  内核 $(uname -r)  ${resources:-内存未知}  磁盘 ${disk:-未知}"
+    ui_kv '网络' "$bbr  ${queue:-未知}  WARP $warp"
 }
 ui_update_review() {
     local dir=$1 target caddy commit same=''
@@ -1320,20 +1311,22 @@ ui_hysteria_summary() {
     version=$(timeout 2 bash -c '"$1" version 2>&1' _ "$bin" | awk 'tolower($1)=="version:" || tolower($1)=="version" {print $2;exit}') || version=''
     version=${version#app/}
     status=$(timeout 2 systemctl is-active "$service" 2>/dev/null) || status=${status:-未知}
-    summary="${version:-未知} · ${status:-未知}"
+    summary="${version:-未知}"
     if [[ -n $version && -n ${UI_HYSTERIA:-} ]]; then
-        if version_gt "$UI_HYSTERIA" "$version"; then summary+=" · 可更新 $UI_HYSTERIA"
-        elif [[ $UI_HYSTERIA == "$version" ]]; then summary+=" · 最新"; fi
+        if version_gt "$UI_HYSTERIA" "$version"; then summary+=" ${C_WARN}↑ $UI_HYSTERIA${C_RESET}"
+        elif [[ $UI_HYSTERIA == "$version" ]]; then summary+=" ${C_GOOD}✓${C_RESET}"; fi
     fi
+    case $status in active) summary="${C_GOOD}●${C_RESET} $summary";; *) summary="${C_BAD}○${C_RESET} $summary";; esac
     REPLY=$summary
 }
 ui_hysteria_status() {
-    if [[ ! -x ${HYSTERIA_BIN:-/usr/local/bin/hysteria} ]]; then ui_value 'Hysteria 2' '未安装 · 选 13 安装 / 接管已有部署'; return; fi
+    if [[ ! -x ${HYSTERIA_BIN:-/usr/local/bin/hysteria} ]]; then ui_value 'Hysteria 2' '未安装  选 13 安装 / 接管'; return; fi
     ui_hysteria_summary
-    ui_value 'Hysteria 2' "$REPLY · 选 13 管理"
+    ui_value 'Hysteria 2' "$REPLY  选 13 管理"
 }
 run_menu_command() { local result; set +e; bash "$SELF" "$@"; result=$?; set -e; [[ $result == 0 ]] || printf '  %b操作未完成（退出码 %s），请查看上方原因%b\n' "$C_BAD" "$result" "$C_RESET"; }
 menu_draw() {
+    local server
     ui_versions 0
     ui_local_version
     ui_home_heading
@@ -1353,13 +1346,14 @@ menu_draw() {
     ui_option 12 '工具 / 诊断'
     ui_option 13 'Hysteria 2 管理'
     ui_line
-    ui_naive_summary; ui_kv '服务端' "$REPLY"
-    ui_client_summary; ui_kv '客户端' "$REPLY"
+    ui_naive_summary; server=$REPLY
+    ui_client_summary
+    ui_kv 'Naive' "服务端 $server    客户端 $REPLY"
     ui_hysteria_summary; ui_kv 'Hysteria' "$REPLY"
     ui_system_rows
     ui_recommendation
     ui_line
-    ui_note 'r 刷新 · 0 退出 · 子菜单 0 返回'
+    ui_note 'r 刷新   0 退出   子菜单 0 返回'
 }
 submenu_draw() {
     local kind=$1

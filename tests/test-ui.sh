@@ -66,26 +66,26 @@ ui_recommendation >"$work/recommendation"
 grep -q '与官方最新不同' "$work/recommendation" || fail 'same Caddy version hides plugin upgrade'
 ok 'plugin differences remain visible when Caddy version is unchanged'
 ui_system_rows >"$work/status"
-grep -q 'BBR 已启用' "$work/status"; grep -q '队列 fq' "$work/status"; grep -q 'WARP 已安装 / 未连接' "$work/status"
+grep -q 'BBR ✓' "$work/status"; grep -q ' fq' "$work/status"; grep -q 'WARP 未连接' "$work/status"
 ok 'home status includes BBR, queue and disconnected WARP'
 export UI_FAKE_WARP_STATUS=Connected
 ui_system_rows >"$work/status"
 grep -q 'WARP 已连接' "$work/status" || fail 'WARP connection state'
 ok 'connected and disconnected WARP are distinguished'
 UI_HYSTERIA=v2.15.0
-ui_hysteria_summary; [[ $REPLY == *'可更新 v2.15.0'* ]] || fail 'Hysteria update detection'
+ui_hysteria_summary; [[ $REPLY == *'↑ v2.15.0'* ]] || fail 'Hysteria update detection'
 UI_HYSTERIA=v2.14.0
-ui_hysteria_summary; [[ $REPLY == *最新* ]] || fail 'Hysteria latest detection'
+ui_hysteria_summary; [[ $REPLY == *✓* ]] || fail 'Hysteria latest detection'
 UI_CLIENT=v154.0.8037.49-5
-ui_client_summary; [[ $REPLY == *'已安装 v154.0.8037.49-4'* && $REPLY == *有更新* ]] || fail 'client kernel update detection'
+ui_client_summary; [[ $REPLY == *'v154.0.8037.49-4 ↑ v154.0.8037.49-5'* ]] || fail 'client kernel update detection'
 UI_CLIENT=v154.0.8037.49-4
-ui_client_summary; [[ $REPLY == *最新* ]] || fail 'client kernel latest detection'
+ui_client_summary; [[ $REPLY == *✓* ]] || fail 'client kernel latest detection'
 ok 'homepage detects Hysteria and client kernel updates'
 jq -n --arg sha "$(digest "$BIN")" '{release:"v2.11.7-naive2",sha256:$sha,forwardproxy:{commit:"e747854e7874000000000000000000000000000000"}}' >"$STATE/current-build.json"
 UI_LOCAL_SIG=''; ui_local_version
 [[ $UI_INSTALLED_TAG == v2.11.7-naive2 ]] || fail 'receipt-based version'
 ui_recommendation >"$work/recommendation"; [[ ! -s $work/recommendation ]] || fail 'up-to-date recommendation should be omitted'
-ui_naive_summary; [[ $REPLY == *官方最新* ]] || fail 'up-to-date version summary'
+ui_naive_summary; [[ $REPLY == *✓* ]] || fail 'up-to-date version summary'
 ok 'verified current build is marked up to date'
 jq '.sha256="wrong-hash"' "$STATE/current-build.json" >"$work/bad-receipt"; cp "$work/bad-receipt" "$STATE/current-build.json"
 UI_LOCAL_SIG=''; ui_local_version
