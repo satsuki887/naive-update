@@ -52,7 +52,7 @@ bash "$SCRIPT" install --build "$BUILD" --yes
 [[ $(sha256sum "$NAIVE_CONFIG") == "$original_hash" ]]
 NAIVE_OFFLINE=1 bash "$SCRIPT" dashboard >"$BASE/dashboard"
 grep -q 'proxy.example.test' "$BASE/dashboard"
-grep -q 'v2.11.7-naive2' "$BASE/dashboard"
+grep -Fq "$(jq -r .release "$BUILD/build.json")" "$BASE/dashboard"
 grep -q 'BBR' "$BASE/dashboard"; grep -q 'WARP' "$BASE/dashboard"
 [[ $(sha256sum "$NAIVE_CONFIG") == "$original_hash" ]]
 echo 'Read-only dashboard identifies actual deployment and preserves config'

@@ -6,6 +6,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  GH_TOKEN: ${{ github.token }}
 concurrency:
   group: tests-${{ github.ref }}
   cancel-in-progress: true
@@ -18,12 +20,14 @@ jobs:
           persist-credentials: false
       - run: bash tests/test-shell.sh
       - run: bash tests/test-ui.sh
+      - run: bash tests/test-management.sh
       - run: shellcheck naive-update.sh ci/*.sh tests/*.sh
       - name: CLI smoke test
         run: |
           bash naive-update.sh --help
           bash naive-update.sh --version
   integration:
+    needs: source-build
     strategy:
       fail-fast: false
       matrix:
@@ -34,7 +38,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - run: bash naive-update.sh download --output ci-build
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: tested-build-${{ matrix.runner }}
+          path: ci-build
+      - run: chmod +x ci-build/caddy
       - run: sudo --preserve-env=GITHUB_ACTIONS bash tests/integration-service.sh ci-build
       - name: Validate clean generated standard Caddyfile
         run: |
@@ -42,7 +50,11 @@ jobs:
           render_config example.com 443 ci-user ci-password auto '' local /var/lib/naive-caddy/www > /tmp/Caddyfile.standard
           ci-build/caddy validate --config /tmp/Caddyfile.standard --adapter caddyfile
   source-build:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -53,9 +65,28 @@ jobs:
           go-version: stable
           cache: false
       - run: bash naive-update.sh build --output shell-build --jobs 2 --yes
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tested-build-${{ matrix.runner }}
+          path: |
+            shell-build/caddy
+            shell-build/build.json
+          retention-days: 1
       - if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: source-compiler-diagnostics
+          name: source-compiler-diagnostics-${{ matrix.runner }}
           path: .naive-build.*/build.log
           include-hidden-files: true
+  hysteria:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: sudo --preserve-env=GITHUB_ACTIONS,GH_TOKEN bash tests/integration-hysteria.sh

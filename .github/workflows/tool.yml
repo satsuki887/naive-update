@@ -13,6 +13,7 @@ jobs:
           persist-credentials: false
       - run: bash tests/test-shell.sh
       - run: bash tests/test-ui.sh
+      - run: bash tests/test-management.sh
       - run: shellcheck naive-update.sh ci/*.sh tests/*.sh
       - env:
           GH_TOKEN: ${{ github.token }}

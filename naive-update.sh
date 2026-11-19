@@ -35,7 +35,7 @@ ui_line() { local width=${COLUMNS:-74} line; [[ $width =~ ^[0-9]+$ ]] || width=7
 ui_section() { printf '\n  %b%s%b\n' "$C_ACCENT" "$1" "$C_RESET"; }
 ui_width() { local text=$1 char i; local LC_ALL=C.UTF-8; UI_TEXT_WIDTH=0; for ((i=0;i<${#text};i++)); do char=${text:i:1}; if [[ $char == [\ -\~] ]]; then UI_TEXT_WIDTH=$((UI_TEXT_WIDTH+1)); else UI_TEXT_WIDTH=$((UI_TEXT_WIDTH+2)); fi; done; }
 ui_value() { local pad; ui_width "$1"; pad=$((12-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%s%b%*s%s\n' "$C_MUTED" "$1" "$C_RESET" "$pad" '' "$2"; }
-ui_pair() { local pad; ui_width "$2"; pad=$((27-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%2s%b  %s%*s%b%2s%b  %s\n' "$C_ACCENT" "$1" "$C_RESET" "$2" "$pad" '' "$C_ACCENT" "$3" "$C_RESET" "$4"; }
+ui_pair() { if [[ ${COLUMNS:-80} =~ ^[0-9]+$ ]] && ((${COLUMNS:-80}<72)); then ui_option "$1" "$2"; ui_option "$3" "$4"; return; fi; local pad; ui_width "$2"; pad=$((27-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%2s%b  %s%*s%b%2s%b  %s\n' "$C_ACCENT" "$1" "$C_RESET" "$2" "$pad" '' "$C_ACCENT" "$3" "$C_RESET" "$4"; }
 ui_option() { printf '  %b%2s%b  %s\n' "$C_ACCENT" "$1" "$C_RESET" "$2"; }
 ui_note() { printf '  %b%s%b\n' "$C_MUTED" "$1" "$C_RESET"; }
 ui_clear() { if [[ -t 1 && ${TERM:-dumb} != dumb && ${NAIVE_NO_CLEAR:-0} != 1 ]]; then printf '\033[2J\033[H'; fi; }
@@ -236,8 +236,16 @@ valid_tag() { [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+-naive[a-zA-Z0-9._-]*$ ]]; }
 regular() { [[ -f $1 && ! -L $1 ]] || die "要求普通文件，拒绝符号链接：$1"; }
 mutable() { local flags; if command -v lsattr >/dev/null; then flags=$(lsattr -d -- "$1" 2>/dev/null | awk '{print $1}') || return 0; [[ $flags != *i* && $flags != *a* ]] || die "文件 immutable/append-only：$1"; fi; }
 download_url() { local -a progress=(--silent --show-error); [[ ! -t 2 || ${NAIVE_PROGRESS:-1} == 0 ]] || progress=(--progress-bar --show-error); curl -fL "${progress[@]}" --retry 3 --connect-timeout 15 --max-time 300 --proto '=https' --proto-redir '=https' --max-filesize 157286400 "$1" -o "$2"; }
-api() { curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 --proto '=https' --proto-redir '=https' -H 'Accept: application/vnd.github+json' -H "User-Agent: naive-update/$VERSION" "https://api.github.com/$1"; }
-latest_tag() { REPLY=$1; [[ $REPLY != latest ]] || REPLY=$(api "repos/$UPSTREAM/releases/latest" | jq -er '.tag_name'); valid_tag "$REPLY" || die '需要服务端 vX.Y.Z-naive… 标签，不能使用 Chromium 客户端版本'; }
+api() { local -a auth=(); [[ -z ${GH_TOKEN:-} ]] || auth=(-H "Authorization: Bearer $GH_TOKEN"); curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 --proto '=https' --proto-redir '=https' "${auth[@]}" -H 'Accept: application/vnd.github+json' -H "User-Agent: naive-update/$VERSION" "https://api.github.com/$1"; }
+latest_tag() {
+    local metadata
+    REPLY=$1
+    if [[ $REPLY == latest ]]; then
+        metadata=$(api "repos/$UPSTREAM/releases/latest") || die 'GitHub API 查询失败；请检查上方 HTTP 错误、网络及 GH_TOKEN 权限/额度'
+        REPLY=$(jq -er '.tag_name' <<<"$metadata") || die 'GitHub 返回数据缺少发行标签'
+    fi
+    valid_tag "$REPLY" || die '需要服务端 vX.Y.Z-naive… 标签，不能使用 Chromium 客户端版本'
+}
 arch() { case $(uname -m) in x86_64) REPLY=amd64;; aarch64|arm64) REPLY=arm64;; *) die '目前仅支持 amd64、arm64';; esac; }
 state_init() {
     root
@@ -277,7 +285,7 @@ copy_atomic() {
 snapshot() {
     local kind=$1 id backup was_active=false enabled=false f had_bin=false had_config=false had_unit=false
     id="$(now)-$(openssl rand -hex 4)"; backup=$STATE/backups/$id; mkdir -p "$backup"; chmod 700 "$backup"
-    if [[ $kind != bbr ]]; then
+    if [[ $kind != bbr && $kind != udp ]]; then
         active && was_active=true
         systemctl is-enabled --quiet "$SERVICE" 2>/dev/null && enabled=true
         for f in "$BIN" "$CONFIG" "$UNIT"; do [[ ! -e $f ]] || { regular "$f"; mutable "$f"; }; done
@@ -291,13 +299,21 @@ snapshot() {
         --argjson had_binary "$had_bin" --argjson had_config "$had_config" --argjson had_unit "$had_unit" --argjson active "$was_active" --argjson enabled "$enabled" \
         --arg binary_sha "$([[ $had_bin == false ]] || digest "$backup/caddy")" --arg config_sha "$([[ $had_config == false ]] || digest "$backup/Caddyfile")" --arg unit_sha "$([[ $had_unit == false ]] || digest "$backup/unit")" \
         '{schema:2,id:$id,kind:$kind,binary:$binary,config:$config,service:$service,unit:$unit,had_binary:$had_binary,had_config:$had_config,had_unit:$had_unit,active:$active,enabled:$enabled,binary_sha:$binary_sha,config_sha:$config_sha,unit_sha:$unit_sha}' >"$backup/meta.json"
+    if [[ $kind == certificates ]]; then
+        jq --arg old "$(readlink "$CERT_ROOT/current" || :)" --arg root "$CERT_ROOT" '. + {cert_root:$root,cert_previous:$old}' "$backup/meta.json" >"$backup/meta.new"
+        mv "$backup/meta.new" "$backup/meta.json"
+    fi
+    if [[ $kind == udp ]]; then
+        [[ ! -f $UDP_FILE ]] || cp --preserve=all "$UDP_FILE" "$backup/udp.conf"
+        jq -n --arg path "$UDP_FILE" --arg rmem "$(sysctl -n net.core.rmem_max)" --arg wmem "$(sysctl -n net.core.wmem_max)" '{path:$path,rmem:$rmem,wmem:$wmem}' >"$backup/udp.json"
+    fi
     REPLY=$id
 }
 check_snapshot() {
     local id=$1 backup=$STATE/backups/$1 f key
     [[ $id =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$ ]] || die '无效的备份 ID'
     regular "$backup/meta.json"
-    jq -e --arg b "$BIN" --arg c "$CONFIG" --arg s "$SERVICE" --arg u "$UNIT" '.schema==2 and .binary==$b and .config==$c and .service==$s and .unit==$u and (.kind|IN("binary","config","deploy","uninstall","bbr"))' "$backup/meta.json" >/dev/null || die '备份目标不匹配'
+    jq -e --arg b "$BIN" --arg c "$CONFIG" --arg s "$SERVICE" --arg u "$UNIT" '.schema==2 and .binary==$b and .config==$c and .service==$s and .unit==$u and (.kind|IN("binary","config","deploy","uninstall","bbr","udp","certificates"))' "$backup/meta.json" >/dev/null || die '备份目标不匹配'
     for f in caddy Caddyfile unit; do
         case $f in caddy) key=binary;; Caddyfile) key=config;; unit) key=unit;; esac
         if [[ $(jq -r ".had_$key" "$backup/meta.json") == true ]]; then regular "$backup/$f"; [[ $(digest "$backup/$f") == "$(jq -r ".${key}_sha" "$backup/meta.json")" ]] || die "备份损坏：$f"; fi
@@ -315,6 +331,20 @@ restore_snapshot() (
     local id=$1 backup=$STATE/backups/$1 kind had path file key
     check_snapshot "$id"; kind=$(jq -r .kind "$backup/meta.json")
     if [[ $kind == bbr ]]; then restore_bbr_files "$backup"; return; fi
+    if [[ $kind == udp ]]; then
+        [[ $(jq -r .path "$backup/udp.json") == "$UDP_FILE" ]] || die 'UDP 恢复路径不匹配'
+        if [[ -f $backup/udp.conf ]]; then copy_atomic "$backup/udp.conf" "$UDP_FILE"; cp --attributes-only --preserve=all "$backup/udp.conf" "$UDP_FILE"; else rm -f "$UDP_FILE"; fi
+        sysctl -w "net.core.rmem_max=$(jq -r .rmem "$backup/udp.json")" "net.core.wmem_max=$(jq -r .wmem "$backup/udp.json")"
+        return
+    fi
+    if [[ $kind == certificates ]]; then
+        [[ $(jq -r .cert_root "$backup/meta.json") == "$CERT_ROOT" ]] || die '证书恢复路径不匹配'
+        local previous
+        previous=$(jq -r .cert_previous "$backup/meta.json")
+        if [[ -n $previous ]]; then cert_activate "$previous"; else rm -f "$CERT_ROOT/current"; fi
+        if [[ $(jq -r .active "$backup/meta.json") == true ]]; then systemctl restart "$SERVICE"; health "$(digest "$BIN")"; fi
+        return
+    fi
     for key in binary config unit; do
         case $kind:$key in binary:config|binary:unit|config:binary|config:unit) continue;; esac
         case $key in binary) path=$BIN; file=caddy;; config) path=$CONFIG; file=Caddyfile;; unit) path=$UNIT; file=unit;; esac
@@ -609,7 +639,7 @@ install_na_alias() {
     ln -s "$TOOL" "$link"; mv -fT "$link" /usr/bin/na
 }
 deploy() {
-    local dir=$BUILD_DIR id candidate domain port username password certmode email='' cert='' key='' camouflage choice certdir='' group stage
+    local dir=$BUILD_DIR id candidate domain port username password certmode=auto email='' cert='' key='' camouflage choice certdir='' group stage
     [[ ! -e $BIN && ! -e $CONFIG && ! -e $UNIT ]] || die '检测到现有部署，请使用升级/配置管理，不覆盖安装'
     [[ $(systemctl show "$SERVICE" -p LoadState --value 2>/dev/null || :) != loaded ]] || die '已存在同名 systemd 服务，不覆盖部署'
     ask '安装全新服务端、创建独立运行用户和 systemd 服务并启动？' || return 0
@@ -626,12 +656,11 @@ deploy() {
         prompt domain '域名（先解析到本服务器）'; valid_domain "$domain" || die '无效域名'
         prompt port 'HTTPS 端口' 443; prompt username '代理用户名'
         read -r -s -p '代理密码（留空随机生成）：' password; say ''; [[ -n $password ]] || password=$(openssl rand -hex 16)
-        prompt choice '证书：1 Caddy 自动 ACME，2 已有完整链证书和私钥' 1
+        prompt choice '证书：1 Caddy 自动 ACME，2 已有完整链证书和私钥' 2
         case $choice in
             1) certmode=auto; prompt email 'ACME 邮箱（可留空）'; say '自动签发需域名解析正确，公网 80 或 443 可完成验证。';;
             2) certmode=manual; prompt cert '完整链证书文件'; prompt key '无口令私钥文件'; check_cert_pair "$cert" "$key" "$domain"
-               certdir=$(dirname "$CONFIG")/naive-certs/$(now); mkdir -p "$certdir"; chmod 750 "$(dirname "$certdir")" "$certdir"; chgrp "$group" "$(dirname "$certdir")" "$certdir"
-               install -m640 -o root -g "$group" "$cert" "$certdir/cert.crt"; install -m640 -o root -g "$group" "$key" "$certdir/private.key";;
+               cert_stage "$cert" "$key" "$group"; cert_activate "$REPLY"; certdir=$CERT_ROOT/current;;
             *) die '无效证书选项';;
         esac
         prompt camouflage '伪装：local 本地静态页，或 https://域名' local
@@ -672,6 +701,7 @@ EOF
     chmod 644 "$UNIT"; systemctl daemon-reload; systemctl enable --now "$SERVICE"; health "$(digest "$BIN")"
     json_atomic "$STATE/current-build.json" <"$dir/build.json"; commit_tx; examples; install_tool
     say "安装成功；主配置：$CONFIG；可选示例：$(dirname "$CONFIG")/examples/"
+    [[ $certmode != manual ]] || cert_hook_info
     say '请按监听配置放行系统防火墙/云安全组的 TCP；需要 HTTP/3 时另放行对应 UDP。'
 }
 adapt_json() { tmpdir; ADAPTED=$REPLY/config.json; "$BIN" adapt --config "$CONFIG" --adapter caddyfile >"$ADAPTED"; }
@@ -855,23 +885,194 @@ cert_import() {
     say '请手工把站点 tls 行改为以下内容，再验证、重载：'
     printf 'tls "%s/cert.crt" "%s/private.key"\n' "$dir" "$dir"
 }
+CERT_ROOT=${NAIVE_CERT_ROOT:-$(dirname "$CONFIG")/managed-certs}
+SERVICE_KIND=${NAIVE_SERVICE_KIND:-naive}
+UDP_FILE=${NAIVE_UDP_FILE:-/etc/sysctl.d/90-naive-update-udp.conf}
+cert_stage() {
+    local cert=$1 key=$2 group=$3 dir
+    check_cert_pair "$cert" "$key" "${DOMAIN:-}"
+    mkdir -p "$CERT_ROOT"; chown "root:$group" "$CERT_ROOT"; chmod 750 "$CERT_ROOT"
+    dir=$(mktemp -d "$CERT_ROOT/version.XXXXXXXX")
+    chown "root:$group" "$dir"; chmod 750 "$dir"
+    install -m640 -o root -g "$group" "$cert" "$dir/cert.crt"
+    install -m640 -o root -g "$group" "$key" "$dir/private.key"
+    REPLY=$dir
+}
+cert_activate() {
+    local link
+    link=$CERT_ROOT/.current-$(openssl rand -hex 4)
+    [[ ! -e $CERT_ROOT/current || -L $CERT_ROOT/current ]] || die 'current 必须为本工具管理的证书链接'
+    ln -s -- "$1" "$link"; mv -fT "$link" "$CERT_ROOT/current"
+}
+cert_hook_info() {
+    say "固定完整链：$CERT_ROOT/current/cert.crt"
+    say "固定私钥：  $CERT_ROOT/current/private.key"
+    say 'acme.sh 将证书安装到你自己的暂存路径，再把以下命令配置为 reloadcmd（替换路径和域名）：'
+    if [[ ${1:-} == hysteria || $SERVICE_KIND == hysteria ]]; then
+        printf '%q hysteria cert-deploy --cert /你的路径/fullchain.pem --key /你的路径/key.pem --domain example.com --yes\n' "$TOOL"
+    else
+        printf '%q cert deploy --cert /你的路径/fullchain.pem --key /你的路径/key.pem --domain example.com --yes\n' "$TOOL"
+    fi
+    say '不要让 acme.sh 直接写入 current；部署命令先校验并成对切换，失败时恢复旧证书。'
+}
+cert_deploy() {
+    local group user id staged
+    [[ -n $CERT_FILE && -n $KEY_FILE && -n $DOMAIN ]] || die '需要 --cert、--key、--domain'
+    [[ -L $CERT_ROOT/current ]] || die '尚未使用固定证书目录，请先通过安装向导配置'
+    user=$(systemctl show "$SERVICE" -p User --value); user=${user:-root}; group=$(id -gn "$user")
+    ask "部署 $DOMAIN 的证书并重新加载 $SERVICE？" || return
+    cert_stage "$CERT_FILE" "$KEY_FILE" "$group"; staged=$REPLY
+    snapshot certificates; id=$REPLY; begin_tx "$id"; cert_activate "$staged"
+    if [[ $SERVICE_KIND == hysteria ]]; then
+        if active; then systemctl restart "$SERVICE"; health "$(digest "$BIN")"; fi
+    else
+        validate_config "$BIN" "$CONFIG" "$STATE/backups/$id/validate.log"
+        if active; then systemctl reload "$SERVICE"; health "$(digest "$BIN")"; fi
+    fi
+    commit_tx
+}
+udp_tune() {
+    local id rmem wmem
+    rmem=$(sysctl -n net.core.rmem_max); wmem=$(sysctl -n net.core.wmem_max)
+    say "UDP 缓冲区上限：接收 $rmem / 发送 $wmem 字节"
+    if ((rmem>=16777216 && wmem>=16777216)); then say '已达到 16 MiB，无需调整'; return; fi
+    ask '将不足的缓冲区上限提高至 16 MiB？保留更大的现有值，并备份原值' || return
+    [[ ! -e $UDP_FILE ]] || regular "$UDP_FILE"
+    snapshot udp; id=$REPLY; begin_tx "$id"
+    ((rmem>=16777216)) || rmem=16777216; ((wmem>=16777216)) || wmem=16777216
+    printf 'net.core.rmem_max = %s\nnet.core.wmem_max = %s\n' "$rmem" "$wmem" >"$STATE/backups/$id/new-udp.conf"
+    copy_atomic "$STATE/backups/$id/new-udp.conf" "$UDP_FILE"; chmod 644 "$UDP_FILE"; sysctl -p "$UDP_FILE"
+    commit_tx
+    say '这只提高 socket 缓冲区上限，不预分配整块内存；BBR/FQ 在菜单 11 单独管理。'
+}
+hysteria_version() { "$1" version 2>&1 | awk 'tolower($1)=="version:" || tolower($1)=="version" {print $2; found=1; exit} END{if(!found)exit 1}'; }
+hysteria_fetch() {
+    local tag=$RELEASE machine metadata name expected actual work url
+    case $(uname -m) in x86_64) machine=amd64;; aarch64|arm64) machine=arm64;; armv7l) machine=arm;; riscv64) machine=riscv64;; *) die '不支持的 Hysteria 架构';; esac
+    if [[ $tag == latest ]]; then metadata=$(api repos/apernet/hysteria/releases/latest); tag=$(jq -er .tag_name <<<"$metadata"); fi
+    [[ $tag =~ ^app/v2\.[0-9]+\.[0-9]+$ ]] || die 'Hysteria 需要 app/v2.x.y 稳定版本标签'
+    tmpdir; work=$REPLY; name=hysteria-linux-$machine; url=https://github.com/apernet/hysteria/releases/download/$tag
+    ui_phase "下载 Hysteria $tag / $machine（当前服务继续运行）"
+    download_url "$url/$name" "$work/hysteria"; download_url "$url/hashes.txt" "$work/hashes.txt"
+    expected=$(awk -v name="$name" '{f=$2;sub(/^\*/,"",f);sub(/^.*\//,"",f);if(f==name){print $1;exit}}' "$work/hashes.txt")
+    [[ $expected =~ ^[0-9a-fA-F]{64}$ && ${expected,,} == "$(digest "$work/hysteria")" ]] || die 'Hysteria SHA256 校验失败'
+    chmod 755 "$work/hysteria"; actual=$(hysteria_version "$work/hysteria")
+    [[ $actual == "${tag#app/}" ]] || die "Hysteria 版本不匹配：$actual / $tag"
+    say "目标：$actual；SHA256：$expected"; REPLY=$work/hysteria
+}
+hysteria_install() {
+    local staged domain port password cert key group id
+    [[ ! -e $BIN && ! -e $CONFIG && ! -e $UNIT ]] || die '检测到现有 Hysteria，请选择更新或编辑配置'
+    [[ $(systemctl show "$SERVICE" -p LoadState --value 2>/dev/null || :) != loaded ]] || die '已存在同名服务'
+    prompt domain '证书域名'; valid_domain "$domain" || die '无效域名'; DOMAIN=$domain
+    prompt port 'Hysteria UDP 端口（避免与 Caddy HTTP/3 冲突）' 8443
+    [[ $port =~ ^[0-9]+$ && ${#port} -le 5 ]] || die '无效端口'
+    ((10#$port>=1 && 10#$port<=65535)) || die '无效端口'
+    if command -v ss >/dev/null && [[ -n $(ss -H -lun "sport = :$port") ]]; then die "UDP $port 已被占用"; fi
+    prompt cert '已有完整链证书路径'; prompt key '已有无口令私钥路径'; check_cert_pair "$cert" "$key" "$domain"
+    read -r -s -p 'Hysteria 密码（留空随机生成）：' password; say ''; [[ -n $password ]] || password=$(openssl rand -hex 16)
+    hysteria_fetch; staged=$REPLY
+    ask "安装 Hysteria，监听 UDP $port，创建独立用户 $RUN_USER 并启动？" || return
+    if ! id "$RUN_USER" >/dev/null 2>&1; then useradd --system --user-group --no-create-home --shell /usr/sbin/nologin "$RUN_USER"; fi
+    group=$(id -gn "$RUN_USER"); mkdir -p "$(dirname "$BIN")" "$(dirname "$CONFIG")" "$(dirname "$UNIT")"
+    chmod 755 "$(dirname "$CONFIG")"
+    cert_stage "$cert" "$key" "$group"; cert_activate "$REPLY"
+    snapshot deploy; id=$REPLY; begin_tx "$id"
+    copy_atomic "$staged" "$BIN"; chmod 755 "$BIN"
+    # JSON strings are also valid YAML scalars, including passwords with punctuation.
+    printf 'listen: ":%s"\ntls:\n  cert: %s\n  key: %s\nauth:\n  type: password\n  password: %s\n' "$port" "$(printf %s "$CERT_ROOT/current/cert.crt" | quote)" "$(printf %s "$CERT_ROOT/current/private.key" | quote)" "$(printf %s "$password" | quote)" >"$CONFIG"
+    chown "root:$group" "$CONFIG"; chmod 640 "$CONFIG"
+    cat >"$UNIT" <<EOF
+[Unit]
+Description=Hysteria 2 server
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=$RUN_USER
+Group=$group
+ExecStart=$BIN server --config $CONFIG
+WorkingDirectory=$(dirname "$CONFIG")
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+LimitNOFILE=1048576
+Restart=on-failure
+RestartSec=3
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 644 "$UNIT"; systemctl daemon-reload; systemctl enable --now "$SERVICE"; health "$(digest "$BIN")"; commit_tx
+    install_tool; cert_hook_info hysteria
+    say "安装成功。请放行 UDP $port；客户端地址 $domain:$port，密码保存在 $CONFIG 的 auth.password。"
+}
+hysteria_update() {
+    local staged id was_active=0 execstart
+    regular "$BIN"; regular "$CONFIG"
+    execstart=$(systemctl show "$SERVICE" -p ExecStart --value)
+    [[ $execstart == *"path=$BIN ;"* ]] || die '服务 ExecStart 与目标二进制不一致，拒绝更新'
+    say "当前：$(hysteria_version "$BIN")"; hysteria_fetch; staged=$REPLY
+    if cmp -s "$BIN" "$staged"; then say '二进制相同，无需更新'; return; fi
+    ask '备份并替换 Hysteria 二进制？配置与 unit 保持原样；运行中的服务会重启' || return
+    active && was_active=1
+    snapshot binary; id=$REPLY; begin_tx "$id"; copy_atomic "$staged" "$BIN"
+    if [[ $was_active == 1 ]]; then systemctl restart "$SERVICE"; health "$(digest "$BIN")"; fi
+    commit_tx
+    [[ $was_active != 0 ]] || say '原服务处于停止状态，更新后仍保持停止；启动时再验证实际配置。'
+}
+hysteria_edit() {
+    local staged editor id
+    regular "$CONFIG"; active || die '请先启动服务；编辑后需要通过真实启动验证配置'
+    tmpdir; staged=$REPLY/config.yaml; cp "$CONFIG" "$staged"
+    editor=${VISUAL:-${EDITOR:-vi}}; "$editor" "$staged"
+    cmp -s "$staged" "$CONFIG" && { say '配置未改变'; return; }
+    ask '备份并应用配置，重启验证；失败会恢复旧配置（可能短暂中断）？' || return
+    snapshot config; id=$REPLY; begin_tx "$id"; copy_atomic "$staged" "$CONFIG"
+    systemctl restart "$SERVICE"; health "$(digest "$BIN")"; commit_tx
+}
+hysteria_action() {
+    case $1 in
+        install) hysteria_install;; update) hysteria_update;; status) [[ ! -x $BIN ]] || hysteria_version "$BIN"; systemctl status "$SERVICE" --no-pager;;
+        start|restart) ask "$1 $SERVICE？" || return; systemctl "$1" "$SERVICE"; health "$(digest "$BIN")";;
+        stop) ask "停止 $SERVICE？" || return; systemctl stop "$SERVICE";;
+        logs) journalctl -u "$SERVICE" --no-pager -n 100;; edit) hysteria_edit;;
+        cert-deploy) cert_deploy;; cert-hook) cert_hook_info hysteria;;
+        backups) find "$STATE/backups" -name meta.json -exec jq -r '[.id,.kind]|@tsv' {} \; ;;
+        rollback) rollback;; recover) recover;; *) die '未知 Hysteria 操作';;
+    esac
+}
+ui_hysteria_status() {
+    local bin=${HYSTERIA_BIN:-/usr/local/bin/hysteria} service=${HYSTERIA_SERVICE:-hysteria-server.service} status version
+    if [[ ! -x $bin ]]; then ui_value 'Hysteria 2' '未安装 · 选 15 安装 / 接管已有部署'; return; fi
+    version=$(timeout 2 bash -c '"$1" version 2>&1' _ "$bin" | awk 'tolower($1)=="version:" || tolower($1)=="version" {print $2;exit}') || version='读取失败'
+    status=$(timeout 2 systemctl is-active "$service" 2>/dev/null) || status=${status:-未知}
+    ui_value 'Hysteria 2' "${version:-未知版本} · $status · 选 15 管理"
+}
 run_menu_command() { local result; set +e; bash "$SELF" "$@"; result=$?; set -e; [[ $result == 0 ]] || printf '  %b操作未完成（退出码 %s），请查看上方原因%b\n' "$C_BAD" "$result" "$C_RESET"; }
 menu_draw() {
     ui_versions 0
-    ui_heading '单文件 Shell · 手工维护 Caddyfile · 内核升级保留配置'
+    ui_heading 'Naive / Hysteria 2 · 服务管理与系统调优'
     ui_section '本机概况'
     ui_system_rows
-    ui_section '版本与更新'
-    ui_version_rows
+    ui_section '服务版本'
+    ui_local_version
+    ui_value '当前 Naive' "${UI_INSTALLED_TAG:-${UI_CADDY:-未安装}}"
+    ui_value '官方服务端' "${UI_OFFICIAL:-未获取}"
+    ui_value '本仓库构建' "${UI_OWN:-未获取}"
+    ui_hysteria_status
     ui_recommendation
-    ui_section '操作菜单'
+    ui_section 'Naive · 安装与日常管理'
     ui_pair 1 '安装 / 部署' 2 '卸载服务端'
     ui_pair 3 'Caddyfile 管理' 4 '服务启停'
     ui_pair 5 '版本检查 / 刷新' 6 '内核更新 / 版本对比'
     ui_pair 7 '分享 / 客户端配置' 8 '运行日志'
-    ui_pair 9 '证书 / ACME' 10 'WARP / 出口检测'
+    ui_section '系统与维护'
+    ui_pair 9 '证书 / 外部 ACME' 10 'WARP / 出口检测'
     ui_pair 11 'BBR / 队列管理' 12 '回滚 / 中断恢复'
     ui_pair 13 '快捷命令' 14 '诊断 / 安装依赖'
+    ui_pair 15 'Hysteria 2 管理' 16 'UDP 缓冲区优化'
     ui_line
     ui_note 'r 刷新状态与官方版本    0 / q 退出    子菜单均可按 0 返回'
 }
@@ -879,9 +1080,10 @@ submenu_draw() {
     local kind=$1
     ui_heading '0 返回主菜单 · 操作后留在本子菜单，便于继续管理'
     case $kind in
+        hysteria) ui_section 'Hysteria 2'; ui_hysteria_status; ui_option 1 '首次安装（外部证书，默认 UDP 8443）'; ui_option 2 '更新官方二进制（保留配置）'; ui_option 3 '服务状态'; ui_option 4 '启动'; ui_option 5 '停止'; ui_option 6 '重启'; ui_option 7 '日志'; ui_option 8 '编辑配置副本并应用'; ui_option 9 '证书续期部署说明'; ui_option 10 '备份列表'; ui_option 11 '恢复最近备份'; ui_option 12 '恢复中断事务';;
         config) ui_section 'Caddyfile 管理'; ui_value '配置文件' "$CONFIG"; ui_option 1 '编辑副本，验证通过后应用'; ui_option 2 '验证当前 Caddyfile'; ui_option 3 '重载手工修改的配置'; ui_option 4 '生成独立示例（不加载、不覆盖主配置）';;
         service) ui_section '服务管理'; ui_value '服务单元' "$SERVICE"; ui_option 1 '查看详细状态'; ui_option 2 '启动'; ui_option 3 '停止'; ui_option 4 '重启'; ui_option 5 '启用开机启动'; ui_option 6 '禁用开机启动';;
-        cert) ui_section '证书与 ACME'; ui_option 1 '证书状态 / 有效期'; ui_option 2 '验证配置并重载证书'; ui_option 3 '导入证书（输出 tls 行，由你手工编辑）'; ui_option 4 '列出已有 acme.sh 证书'; ui_option 5 '调用已有 acme.sh 续期';;
+        cert) ui_section '证书与 ACME'; ui_option 1 '证书状态 / 有效期'; ui_option 2 '验证配置并重载证书'; ui_option 3 '导入证书（输出 tls 行，由你手工编辑）'; ui_option 4 '列出已有 acme.sh 证书'; ui_option 5 '调用已有 acme.sh 续期'; ui_option 6 '固定证书目录 / 续期钩子说明';;
         warp) ui_section 'WARP 与出口检测'; ui_option 1 '查看连接状态和设置'; ui_option 2 '从 Cloudflare 官方源安装'; ui_option 3 '连接本地代理模式'; ui_option 4 '断开 WARP'; ui_option 5 '检测直连出口'; ui_option 6 '检测本地 SOCKS5 出口';;
         bbr) ui_section 'BBR 与网络队列'; bbr_status 2>/dev/null || ui_note '当前系统无法读取 sysctl'; ui_option 1 '刷新当前参数'; ui_option 2 '启用 BBR + FQ'; ui_option 3 '切换 cubic + fq_codel'; ui_option 4 '恢复某次修改前的参数'; ui_note '只使用当前内核；修改独立 sysctl 文件，不安装第三方内核';;
         backup) ui_section '备份与恢复'; [[ ! -f $STATE/pending.json ]] || printf '  %b检测到未完成事务，请先选择 4 恢复%b\n' "$C_BAD" "$C_RESET"; ui_option 1 '列出备份'; ui_option 2 '恢复最近一次操作前状态'; ui_option 3 '指定备份恢复'; ui_option 4 '恢复中断事务';;
@@ -896,9 +1098,10 @@ submenu() {
         submenu_draw "$kind"; read -r -p '  选择操作 [0 返回]：' choice || return 0
         [[ $choice != 0 && $choice != q ]] || return 0
         case $kind:$choice in
+            hysteria:1) run_menu_command hysteria install;; hysteria:2) run_menu_command hysteria update;; hysteria:3) run_menu_command hysteria status;; hysteria:4) run_menu_command hysteria start;; hysteria:5) run_menu_command hysteria stop;; hysteria:6) run_menu_command hysteria restart;; hysteria:7) run_menu_command hysteria logs;; hysteria:8) run_menu_command hysteria edit;; hysteria:9) run_menu_command hysteria cert-hook;; hysteria:10) run_menu_command hysteria backups;; hysteria:11) run_menu_command hysteria rollback;; hysteria:12) run_menu_command hysteria recover;;
             config:1) run_menu_command config edit;; config:2) run_menu_command config validate;; config:3) run_menu_command config reload;; config:4) run_menu_command config examples;;
             service:1) run_menu_command service status;; service:2) run_menu_command service start;; service:3) run_menu_command service stop;; service:4) run_menu_command service restart;; service:5) run_menu_command service enable;; service:6) run_menu_command service disable;;
-            cert:1) run_menu_command cert status;; cert:2) run_menu_command cert reload;; cert:3) run_menu_command cert import;; cert:4) run_menu_command cert acme-list;; cert:5) run_menu_command cert acme-renew;;
+            cert:1) run_menu_command cert status;; cert:2) run_menu_command cert reload;; cert:3) run_menu_command cert import;; cert:4) run_menu_command cert acme-list;; cert:5) run_menu_command cert acme-renew;; cert:6) run_menu_command cert hook;;
             warp:1) run_menu_command warp status;; warp:2) run_menu_command warp install;; warp:3) run_menu_command warp connect;; warp:4) run_menu_command warp disconnect;; warp:5) run_menu_command network-check;; warp:6) prompt port '  SOCKS5 端口' 40000; run_menu_command network-check "$port";;
             bbr:1) continue;; bbr:2) run_menu_command bbr enable;; bbr:3) run_menu_command bbr disable;; bbr:4) find "$STATE/backups" -name bbr.json -print 2>/dev/null || :; prompt id '  备份目录 ID'; [[ -z $id ]] || run_menu_command rollback "$id";;
             backup:1) run_menu_command backups;; backup:2) run_menu_command rollback;; backup:3) prompt id '  备份 ID'; [[ -z $id ]] || run_menu_command rollback "$id";; backup:4) run_menu_command recover;;
@@ -941,7 +1144,7 @@ menu() {
         menu_draw; read -r -p '  请选择 [r 刷新 / 0 退出]：' choice || break
         case $choice in
             0|q) break;; r|R|5) UI_LOCAL_SIG='' UI_CONFIG_SIG=''; ui_versions 1; continue;;
-            3) submenu config;; 4) submenu service;; 6) upgrade_menu;; 9) submenu cert;; 10) submenu warp;; 11) submenu bbr;; 12) submenu backup;; 13) submenu shortcut;; 14) submenu doctor;;
+            3) submenu config;; 4) submenu service;; 6) upgrade_menu;; 9) submenu cert;; 10) submenu warp;; 11) submenu bbr;; 12) submenu backup;; 13) submenu shortcut;; 14) submenu doctor;; 15) submenu hysteria;; 16) run_menu_command tune udp; ui_pause;;
             1) run_menu_command deploy; ui_pause;; 2) run_menu_command uninstall; ui_pause;; 7) run_menu_command share; ui_pause;; 8) run_menu_command logs; ui_pause;;
             *) say '  编号无效'; ui_pause;;
         esac
@@ -958,7 +1161,9 @@ install --build DIR      安装已有构建，不重写 Caddyfile
 update --source download|build   获取新内核并安装
 config edit|validate|reload|examples
 service status|start|stop|restart|enable|disable
-cert status|reload|import|acme-list|acme-renew
+cert status|reload|import|deploy|hook|acme-list|acme-renew
+hysteria install|update|status|start|stop|restart|logs|edit|cert-deploy|cert-hook|backups|rollback|recover
+tune status|udp          UDP 缓冲区上限，修改前备份，可用 rollback 恢复
 share|logs|doctor|check|backups|rollback [ID]|recover
 dashboard                显示本机、BBR/WARP 与版本对比状态（不进入菜单）
 bbr status|enable|disable
@@ -976,7 +1181,7 @@ main() {
     CERT_FILE='' KEY_FILE='' DOMAIN=''
     case $command in --help|-h) usage; return;; --version) say "$VERSION"; return;; esac
     [[ $# == 0 ]] || shift
-    case $command in config|service|cert|bbr|warp) sub=${1:-status}; [[ $# == 0 ]] || shift;; rollback|internal-restore) if [[ ${1:-} != --* ]]; then backup_id=${1:-}; [[ $# == 0 ]] || shift; fi;; network-check) if [[ ${1:-} != --* ]]; then network_port=${1:-}; [[ $# == 0 ]] || shift; fi;; esac
+    case $command in config|service|cert|bbr|warp|hysteria|tune) sub=${1:-status}; [[ $# == 0 ]] || shift;; rollback|internal-restore) if [[ ${1:-} != --* ]]; then backup_id=${1:-}; [[ $# == 0 ]] || shift; fi;; network-check) if [[ ${1:-} != --* ]]; then network_port=${1:-}; [[ $# == 0 ]] || shift; fi;; esac
     while (($#)); do
         case $1 in
             --yes) YES=1; shift;;
@@ -987,6 +1192,14 @@ main() {
         esac
     done
     [[ $JOBS =~ ^[1-9][0-9]*$ && $JOBS -ge 1 && $JOBS -le 256 ]] || die 'jobs 必须为 1–256'
+    if [[ $command == hysteria ]]; then
+        SERVICE_KIND=hysteria
+        BIN=${HYSTERIA_BIN:-/usr/local/bin/hysteria}; CONFIG=${HYSTERIA_CONFIG:-/etc/hysteria/config.yaml}
+        SERVICE=${HYSTERIA_SERVICE:-hysteria-server.service}; UNIT=${HYSTERIA_UNIT:-/etc/systemd/system/$SERVICE}
+        STATE=${HYSTERIA_STATE:-/var/lib/naive-update/hysteria}; RUN_USER=${HYSTERIA_USER:-hysteria}
+        CERT_ROOT=${HYSTERIA_CERT_ROOT:-/etc/hysteria/managed-certs}
+    fi
+    export NAIVE_CERT_ROOT=$CERT_ROOT NAIVE_UDP_FILE=$UDP_FILE NAIVE_SERVICE_KIND=$SERVICE_KIND
     export NAIVE_BIN=$BIN NAIVE_CONFIG=$CONFIG NAIVE_SERVICE=$SERVICE NAIVE_UNIT=$UNIT NAIVE_STATE=$STATE NAIVE_TOOL=$TOOL NAIVE_DATA=$DATA NAIVE_USER=$RUN_USER NAIVE_BBR_FILE=$BBR_FILE
     trap on_exit EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
     case $command in
@@ -1001,14 +1214,16 @@ main() {
         check) ui_versions 1; ui_heading '版本检查'; ui_version_rows; return;;
         dashboard) menu_draw; return;;
     esac
-    need systemctl; need flock; need setpriv; state_init "$command"
+    need systemctl; need flock; need setpriv; state_init "${sub:-$command}"
     case $command in
+        hysteria) hysteria_action "$sub";;
+        tune) case $sub in status) sysctl net.core.rmem_max net.core.wmem_max;; udp) udp_tune;; *) die '未知 tune 操作';; esac;;
         deploy) deploy;;
         install) [[ -n $BUILD_DIR ]] || die '需要 --build DIR'; install_binary "$BUILD_DIR";;
         update) ui_phase "获取目标 $RELEASE（$source）；下载或编译阶段不会重启服务"; case $source in download) fetch_build;; build) build_source;; *) die 'source 必须为 download 或 build';; esac; install_binary "$OUTPUT";;
         config) case $sub in edit) edit_config;; validate) snapshot config; id=$REPLY; validate_config "$BIN" "$CONFIG" "$STATE/backups/$id/validate.log"; say '配置验证通过';; reload) reload_config;; examples) examples; say "示例已写入 $(dirname "$CONFIG")/examples；未自动加载";; *) die '未知 config 操作';; esac;;
         service) case $sub in status) systemctl status "$SERVICE" --no-pager;; start|restart) ask "$sub $SERVICE？" || return; systemctl "$sub" "$SERVICE"; health "$(digest "$BIN")";; stop|enable|disable) ask "$sub $SERVICE？" || return; systemctl "$sub" "$SERVICE";; *) die '未知 service 操作';; esac;;
-        cert) case $sub in status) cert_status;; reload) reload_config;; import) cert_import;; acme-list) acme_existing list;; acme-renew) acme_existing renew;; *) die '未知 cert 操作';; esac;;
+        cert) case $sub in status) cert_status;; reload) reload_config;; import) cert_import;; deploy) cert_deploy;; hook) cert_hook_info;; acme-list) acme_existing list;; acme-renew) acme_existing renew;; *) die '未知 cert 操作';; esac;;
         bbr) case $sub in status) bbr_status;; enable) bbr_set bbr fq;; disable) bbr_set cubic fq_codel;; *) die '未知 bbr 操作';; esac;;
         warp) case $sub in status) need warp-cli; warp-cli status; warp-cli settings;; install) warp_install;; connect) warp_connect;; disconnect) need warp-cli; ask '断开 WARP？' || return; warp-cli disconnect;; *) die '未知 warp 操作';; esac;;
         network-check) network_check "$network_port";; share) share;; logs) journalctl -u "$SERVICE" --no-pager -n 100;;

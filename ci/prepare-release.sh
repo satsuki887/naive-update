@@ -2,7 +2,11 @@
 set -Eeuo pipefail
 # shellcheck source=naive-update.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../naive-update.sh"
-latest_tag "${REQUESTED_RELEASE:-latest}"
+requested=${REQUESTED_RELEASE:-latest}
+if [[ $requested == latest ]]; then
+    requested=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
+fi
+latest_tag "$requested"
 upstream=$REPLY
 tag=server-$upstream
 needed=true
