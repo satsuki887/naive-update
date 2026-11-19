@@ -2,7 +2,7 @@
 
 独立的交互式 **Bash 运维工具**：安装与更新 Naive / Hysteria 2、管理服务和外部证书、BBR/FQ、UDP 缓冲区及 WARP。运行时只需一个 `naive-update.sh`，无需 Python 或其他配套源码文件。
 
-新增入口：**13 Hysteria 2 管理**；UDP 缓冲区优化并入 **9 网络优化**。菜单 8 可直接安装 acme.sh，并给出 NameSilo DNS-01 申请和 install-cert 部署示例；新安装默认使用已有证书，并提供固定证书目录及续期部署钩子。详见 [Hysteria、证书与优化指南](docs/hysteria-and-certificates.md) 和 [上线前审视 / CI 故障证据](docs/readiness-review.md)。
+支持 Naive 服务端、Hysteria 2、外部证书与 ACME、BBR/FQ、UDP 缓冲区和 WARP。Hysteria、证书与优化说明见 [Hysteria、证书与优化指南](docs/hysteria-and-certificates.md)。
 
 本工具由第三方维护，服务端使用 Naive 官方 `klzgrad/forwardproxy` 源码及其 Caddy 版本和补丁。GitHub Actions 定时编译 Linux amd64 安装包。工具可从 `tool-v*` Release 校验后自动更新自身，也不使用原博主的脚本或二进制。
 
@@ -43,11 +43,11 @@ sudo naive-update
 | 12 | 安装快捷命令、工具自更新、接管 na、系统诊断、安装依赖 |
 | 13 | Hysteria 2 安装、更新、服务、配置、证书与恢复 |
 
-## 首页状态与返回导航（2.1）
+## 首页与交互
 
 完整界面预览：[首页示例](docs/dashboard-example.txt)（域名、证书和系统指标均为虚构演示数据）。
 
-首页直接显示系统/内存/磁盘、服务运行状态/PID/运行时长/开机启动、域名与监听、协议、配置解析结果和证书有效期。BBR 是否启用、当前队列及 WARP 安装/连接状态也在首页显示，无需先进入附加功能菜单。
+首页用紧凑状态表显示服务运行状态、域名/端口/协议、证书剩余天数、系统/内存/磁盘、BBR/队列/WARP，以及服务端和 Hysteria 版本；PID、进程内存、自启在菜单 4，证书详情在菜单 8，完整版本信息用 `check`。
 
 主页显示服务端版本（当前/官方/本仓库）与 Hysteria 状态；服务端更新看菜单 5。na 脚本的 `v154…` 是它用 Naive 客户端发行号写入 `/etc/caddy/version` 的标记，不是 Caddy 服务端版本，本工具不采用。完整的 Caddy 版本、插件提交、包就绪情况和参考版本放在更新页及 `check` 命令中。旧部署优先从真实插件提交匹配官方标签；本工具安装记录只有与当前二进制 SHA256 一致时才采用。不能识别时显示未知，不伪造版本。
 
@@ -182,7 +182,7 @@ sudo naive-update recover --yes           # 断电/SIGKILL 等留下 pending.jso
 
 测试包含 ShellCheck、输入与配方验证、包内容/摘要检查、真实新安装（非 root 服务）、自定义配置保留、启动失败恢复、手动回滚和事务恢复。测试仅在一次性 runner 中创建服务，不连接生产服务器。
 
-`tool-v*` 标签发布单文件工具和摘要，且不抢占服务端包的 latest 标记。脚本安装到服务器后不会自动更新自身。
+`tool-v*` 标签发布单文件工具和摘要，不抢占服务端包的 latest 标记。工具在菜单启动和按 `r` 时检查 `tool-v*` Release，默认自动更新自身；`NAIVE_AUTO_UPDATE=0` 可关闭自动更新。
 
 ```bash
 bash tests/test-shell.sh

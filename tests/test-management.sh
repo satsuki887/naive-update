@@ -79,9 +79,6 @@ udp_tune
 id=$(jq -r .id "$STATE/latest.json"); restore_snapshot "$id"
 [[ $(cat "$TEST_WORK/rmem") == 212992 && $(cat "$TEST_WORK/wmem") == 33554432 && ! -e $UDP_FILE ]]
 echo 'ok - UDP tuning preserves larger limits and restores original runtime values and file absence'
-COLUMNS=48 ui_pair 1 Install 2 Update >"$TEST_WORK/narrow"
-[[ $(wc -l <"$TEST_WORK/narrow") == 2 ]]
-echo 'ok - narrow terminals use one menu column'
 mkdir "$TEST_WORK/mock-bin"
 cat >"$TEST_WORK/mock-bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -113,8 +110,8 @@ grep -q '/root/certs/cert.crt' <<<"$out"
 SERVICE=caddy.service
 echo 'ok - ACME examples use short acme.sh commands, /root/certs and service-specific reload'
 domain_check=''
-prompt_until domain_check '域名' '' valid_domain <<< $'bad domain\nnana.artoria.top'
-[[ $domain_check == nana.artoria.top ]]
+prompt_until domain_check '域名' '' valid_domain <<< $'bad domain\nnana.example.com'
+[[ $domain_check == nana.example.com ]]
 secret_check=''
 prompt_secret secret_check '密码：' <<< $'ab\177c'
 [[ $secret_check == ac ]]

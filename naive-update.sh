@@ -37,7 +37,6 @@ ui_section() { printf '\n  %b%s%b\n' "$C_ACCENT" "$1" "$C_RESET"; }
 ui_width() { local text=$1 char i; local LC_ALL=C.UTF-8; UI_TEXT_WIDTH=0; for ((i=0;i<${#text};i++)); do char=${text:i:1}; if [[ $char == [\ -\~] ]]; then UI_TEXT_WIDTH=$((UI_TEXT_WIDTH+1)); else UI_TEXT_WIDTH=$((UI_TEXT_WIDTH+2)); fi; done; }
 ui_value() { local pad; ui_width "$1"; pad=$((12-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%s%b%*s%s\n' "$C_MUTED" "$1" "$C_RESET" "$pad" '' "$2"; }
 ui_kv() { local pad; ui_width "$1"; pad=$((8-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%s%b%*s%s\n' "$C_ACCENT" "$1" "$C_RESET" "$pad" '' "$2"; }
-ui_pair() { if [[ ${COLUMNS:-80} =~ ^[0-9]+$ ]] && ((${COLUMNS:-80}<72)); then ui_option "$1" "$2"; ui_option "$3" "$4"; return; fi; local pad; ui_width "$2"; pad=$((24-UI_TEXT_WIDTH)); ((pad>0)) || pad=1; printf '  %b%2s%b  %s%*s%b%2s%b  %s\n' "$C_ACCENT" "$1" "$C_RESET" "$2" "$pad" '' "$C_ACCENT" "$3" "$C_RESET" "$4"; }
 ui_option() { printf '  %b%2s%b  %s\n' "$C_ACCENT" "$1" "$C_RESET" "$2"; }
 ui_note() { printf '  %b%s%b\n' "$C_MUTED" "$1" "$C_RESET"; }
 ui_clear() { if [[ -t 1 && ${TERM:-dumb} != dumb && ${NAIVE_NO_CLEAR:-0} != 1 ]]; then printf '\033[2J\033[H'; fi; }
